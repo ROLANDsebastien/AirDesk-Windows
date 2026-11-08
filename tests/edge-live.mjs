@@ -92,7 +92,7 @@ try {
     return response.result.value === "✓";
   }, "Real Edge did not connect to the installed native host");
   await command("Runtime.evaluate", {
-    expression: "globalThis.edgeTestReplies = []; port.onMessage.addListener(({type, reason}) => { edgeTestReplies.push(reason ?? type); if (edgeTestReplies.length > 20) edgeTestReplies.shift(); })"
+    expression: "globalThis.edgeTestReplies = []; port.onMessage.addListener(({type, reason, windowTitle}) => { const detail = reason ?? (windowTitle ? type + ':' + windowTitle.slice(0,100) : type); if (detail !== edgeTestReplies.at(-1)) edgeTestReplies.push(detail); if (edgeTestReplies.length > 12) edgeTestReplies.shift(); })"
   }, workerSession);
   console.log("Edge service worker and native messaging verified.");
 
@@ -105,29 +105,37 @@ try {
   const system = await command("SystemInfo.getProcessInfo");
   const browserPid = system.processInfo.find(info => info.type === "browser").id;
   const focusScript = fileURLToPath(new URL("../installer/focus-edge.ps1", import.meta.url));
-  await promisify(execFile)("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", focusScript, "-ProcessId", String(browserPid)]);
-  await command("Runtime.evaluate", {
-    expression: `chrome.tabs.query({}).then(tabs => chrome.windows.update(tabs.find(tab => tab.url === ${JSON.stringify(base + "/first")}).windowId, {focused:true}))`,
-    awaitPromise: true
-  }, workerSession);
+  let lastFocus = 0;
+  const ensureFocus = async () => {
+    if (Date.now() - lastFocus < 3000) return;
+    await promisify(execFile)("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", focusScript, "-ProcessId", String(browserPid)]);
+    lastFocus = Date.now();
+  };
+  const readInForeground = async () => {
+    await ensureFocus();
+    return readState();
+  };
+
   try {
-    await until(async () => (await readState()).pending.find(item => item.browserUrl === `${base}/first`),
+    await until(async () => (await readInForeground()).pending.find(item => item.browserUrl === `${base}/first`),
       "The foreground Edge URL was not recorded");
+    await command("Page.navigate", { url: `${base}/second` }, pageSession);
+    await until(async () => {
+      const updated = await readInForeground();
+      return updated.captures.length > state.captures.length &&
+        updated.pending.some(item => item.browserUrl === `${base}/second`);
+    }, "Site navigation did not record the new URL and trigger a capture");
   } catch (error) {
     const current = await readState();
     const focus = await command("Runtime.evaluate", {
-      expression: "chrome.windows.getAll({windowTypes:['normal'],populate:true}).then(windows => ({browser, replies:edgeTestReplies, windows:windows.map(w => ({id:w.id,focused:w.focused,state:w.state,incognito:w.incognito,active:w.tabs.find(t=>t.active)?.url}))}))",
+      expression: "chrome.windows.getAll({windowTypes:['normal'],populate:true}).then(windows => ({browser, replies:edgeTestReplies, windows:windows.map(w => ({id:w.id,focused:w.focused,state:w.state,active:w.tabs.find(t=>t.active)?.url,title:w.tabs.find(t=>t.active)?.title}))}))",
       awaitPromise: true, returnByValue: true
     }, workerSession);
     const { latest, settings } = current;
-    throw new Error(`${error.message}. Desktop state=${latest.state}, idle=${latest.idleSeconds}, app=${latest.appBundleId}, domain=${latest.browserDomain}, Edge protocol=${JSON.stringify(focus.result.value)}, paused=${settings.paused}, tracking=${settings.trackSites}`);
+    const diagnostic = `${error.message}. Desktop state=${latest.state}, idle=${latest.idleSeconds}, app=${latest.appBundleId}, domain=${latest.browserDomain}, Edge protocol=${JSON.stringify(focus.result.value)}, paused=${settings.paused}, tracking=${settings.trackSites}`;
+    console.log("::error::" + diagnostic.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A"));
+    throw new Error(diagnostic);
   }
-  await command("Page.navigate", { url: `${base}/second` }, pageSession);
-  await until(async () => {
-    const updated = await readState();
-    return updated.captures.length > state.captures.length &&
-      updated.pending.some(item => item.browserUrl === `${base}/second`);
-  }, "Site navigation did not record the new URL and trigger a capture");
   console.log("Real Edge URL and screenshot on site change verified.");
 } finally {
   socket?.close();

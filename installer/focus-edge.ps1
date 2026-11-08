@@ -23,6 +23,9 @@ public static class AirDeskTestFocus {
         }, IntPtr.Zero);
         return result;
     }
+    [StructLayout(LayoutKind.Sequential)] public struct Bounds { public int Left, Top, Right, Bottom; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Bounds bounds);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
@@ -35,7 +38,12 @@ if ($window -eq [IntPtr]::Zero) { throw 'Edge window unavailable.' }
 [AirDeskTestFocus]::keybd_event(18, 0, 0, [UIntPtr]::Zero)
 [AirDeskTestFocus]::keybd_event(18, 0, 2, [UIntPtr]::Zero)
 [void][AirDeskTestFocus]::SetForegroundWindow($window)
-[AirDeskTestFocus]::mouse_event(1, 1, 0, 0, [UIntPtr]::Zero)
+$bounds = [AirDeskTestFocus+Bounds]::new()
+if ([AirDeskTestFocus]::GetWindowRect($window, [ref]$bounds)) {
+    [void][AirDeskTestFocus]::SetCursorPos([int](($bounds.Left + $bounds.Right) / 2), [int](($bounds.Top + $bounds.Bottom) / 2))
+    [AirDeskTestFocus]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+    [AirDeskTestFocus]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+}
 Start-Sleep -Milliseconds 250
 [uint32]$foreground = 0
 [void][AirDeskTestFocus]::GetWindowThreadProcessId([AirDeskTestFocus]::GetForegroundWindow(), [ref]$foreground)
