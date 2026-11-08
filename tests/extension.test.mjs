@@ -80,6 +80,13 @@ test("marks an in-progress navigation without forwarding its URL", async () => {
 test("includes a title only when Windows requests foreground corroboration", async () => {
   const worker = extension();
   worker.focused.focused = false;
-  await worker.receive({ type: "permission", grant: "test", matchTitle: true });
+  await worker.receive({ type: "permission", grant: "test", windowTitle: "Example - Microsoft Edge" });
   assert.deepEqual(worker.messages.at(-1), { type: "site", grant: "test", url: "https://example.test", title: "Example" });
+});
+
+test("does not send a URL when the tab title disagrees with the foreground window", async () => {
+  const worker = extension();
+  worker.focused.focused = false;
+  await worker.receive({ type: "permission", grant: "test", windowTitle: "Another window - Microsoft Edge" });
+  assert.ok(worker.messages.every(message => message.type === "check"));
 });

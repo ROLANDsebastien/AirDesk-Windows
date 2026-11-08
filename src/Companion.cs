@@ -180,11 +180,11 @@ internal sealed class Companion : IDisposable
             if (!request.NormalWindow) return status with { Reason = "window_unavailable" };
             if (!string.Equals(request.Browser, app.Process, StringComparison.OrdinalIgnoreCase))
                 return status with { Reason = "browser_mismatch" };
-            bool matchTitle = !request.Focused;
-            if (matchTitle && !WindowsTelemetry.HasSingleBrowserWindow(app)) return status with { Reason = "window_not_unique" };
+            var caption = request.Focused ? null : WindowsTelemetry.ForegroundBrowserCaption(app);
+            if (!request.Focused && caption is null) return status with { Reason = "window_title_unavailable" };
             var grant = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-            browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2), matchTitle);
-            return new("permission", true, grant, settings.FullLinks, matchTitle);
+            browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2), caption is not null);
+            return new("permission", true, grant, settings.FullLinks, caption);
         }
 
         if (request.Type is not ("site" or "pending") || browserGrant is not { } issued || request.Grant != issued.Value)

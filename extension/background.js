@@ -45,7 +45,7 @@ async function share(message, connection) {
   if (message.type !== "permission" || typeof message.grant !== "string") return;
   try {
     const window = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (window.incognito || window.state === "minimized" || (!window.focused && !message.matchTitle)) return;
+    if (window.incognito || window.state === "minimized" || (!window.focused && !message.windowTitle)) return;
     const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
     if (connection !== port || tab?.incognito) return;
     let address = null;
@@ -54,10 +54,15 @@ async function share(message, connection) {
       if (["http:", "https:"].includes(url.protocol) && !url.username && !url.password)
         address = message.fullLinks ? url.href : url.origin;
     }
+    const title = message.windowTitle && address ? tab.title : null;
+    if (message.windowTitle && address && (!title || title.length > 500 ||
+        (message.windowTitle !== title && !message.windowTitle.startsWith(title + " - ") &&
+         !message.windowTitle.startsWith(title + " – ")))) return;
+
     const latest = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (connection === port && latest.id === window.id && !latest.incognito && latest.state !== "minimized" && (latest.focused || message.matchTitle)) {
+    if (connection === port && latest.id === window.id && !latest.incognito && latest.state !== "minimized" && (latest.focused || message.windowTitle)) {
       const report = { type: tab?.pendingUrl ? "pending" : "site", grant: message.grant, url: address };
-      if (message.matchTitle && address) report.title = tab.title?.slice(0, 500);
+      if (title) report.title = title;
       connection.postMessage(report);
     }
   } catch {

@@ -91,44 +91,44 @@ internal static partial class WindowsTelemetry
         app.Process.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
         app.Process.Equals("chrome", StringComparison.OrdinalIgnoreCase);
 
-    public static bool HasSingleBrowserWindow(Foreground browser)
+    public static string? ForegroundBrowserCaption(Foreground browser) =>
+        GetForegroundWindow() == browser.Window ? WindowCaption(browser.Window) : null;
+
+    public static bool MatchesBrowserTitle(Foreground browser, string? tabTitle)
     {
-        int count = 0;
-        bool foundForeground = false;
+        if (string.IsNullOrWhiteSpace(tabTitle) || tabTitle.Length > 500 ||
+            !TitleMatches(ForegroundBrowserCaption(browser), tabTitle)) return false;
+
+        int matches = 0;
         var name = new StringBuilder(64);
         EnumWindows((window, _) =>
         {
             if (!IsWindowVisible(window) || IsIconic(window) ||
                 GetClassName(window, name, name.Capacity) == 0 || name.ToString() != "Chrome_WidgetWin_1" ||
+                !TitleMatches(WindowCaption(window), tabTitle) ||
                 GetWindowThreadProcessId(window, out var id) == 0) return true;
             try
             {
                 using var process = Process.GetProcessById((int)id);
-                if (process.ProcessName.Equals(browser.Process, StringComparison.OrdinalIgnoreCase))
-                {
-                    count++;
-                    foundForeground |= window == browser.Window;
-                }
+                if (process.ProcessName.Equals(browser.Process, StringComparison.OrdinalIgnoreCase)) matches++;
             }
             catch (ArgumentException) { }
             catch (InvalidOperationException) { }
-            catch (System.ComponentModel.Win32Exception) { count = 2; }
-            return count < 2;
+            catch (System.ComponentModel.Win32Exception) { matches = 2; }
+            return matches < 2;
         }, IntPtr.Zero);
-        return count == 1 && foundForeground;
+        return matches == 1 && GetForegroundWindow() == browser.Window;
     }
 
-    public static bool MatchesBrowserTitle(Foreground browser, string? tabTitle)
+    private static string? WindowCaption(IntPtr window)
     {
-        if (string.IsNullOrWhiteSpace(tabTitle) || tabTitle.Length > 500 ||
-            GetForegroundWindow() != browser.Window || !HasSingleBrowserWindow(browser)) return false;
         var caption = new StringBuilder(1024);
-        if (GetWindowText(browser.Window, caption, caption.Capacity) == 0) return false;
-        var title = caption.ToString();
-        // Only corroborate the active browser frame. Never retain its window title.
-        return title == tabTitle || title.StartsWith(tabTitle + " - ", StringComparison.Ordinal) ||
-            title.StartsWith(tabTitle + " – ", StringComparison.Ordinal);
+        return GetWindowText(window, caption, caption.Capacity) > 0 ? caption.ToString() : null;
     }
+
+    private static bool TitleMatches(string? caption, string title) =>
+        caption == title || caption?.StartsWith(title + " - ", StringComparison.Ordinal) == true ||
+        caption?.StartsWith(title + " – ", StringComparison.Ordinal) == true;
 
     public static Website? ParseWebsite(string? value, bool fullLinks, string[] excluded)
     {
