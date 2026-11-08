@@ -1,7 +1,7 @@
 {
   "name": "com.airdesk.companion",
   "description": "AirDesk Companion pour Windows",
-  "path": "AirDeskCompanion.exe",
+  "path": "AirDeskBrowserHost.exe",
   "type": "stdio",
   "allowed_origins": [
     "chrome-extension://pcmjjiolpfnkkomnkijaabopmlolgdea/"

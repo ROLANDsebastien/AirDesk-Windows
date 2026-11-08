@@ -37,5 +37,6 @@ Pour compiler localement sur Windows avec le SDK .NET 10 et Inno Setup 6 :
 
 ```powershell
 dotnet publish src/AirDesk.Companion.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
+dotnet publish native-host/AirDesk.BrowserHost.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer/AirDesk.iss
 ```

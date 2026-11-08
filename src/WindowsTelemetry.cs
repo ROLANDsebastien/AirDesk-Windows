@@ -185,6 +185,27 @@ internal static partial class WindowsTelemetry
         return buffer.ToArray();
     }
 
+    public static string OperatingSystemName()
+    {
+        var version = Environment.OSVersion.Version;
+        string? installationType;
+        try
+        {
+            installationType = Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+                "InstallationType", null) as string;
+        }
+        catch (Exception error) when (error is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            installationType = null;
+        }
+
+        if (installationType?.StartsWith("Server", StringComparison.OrdinalIgnoreCase) == true)
+            return $"Windows Server (build {version.Build})";
+        if (version.Major == 10 && installationType == "Client")
+            return $"Windows {(version.Build >= 22000 ? 11 : 10)} (build {version.Build})";
+        return "Windows " + version;
+    }
+
     public static WindowsInventory Inventory()
     {
         var applications = new Dictionary<string, InstalledApp>(StringComparer.OrdinalIgnoreCase);
@@ -205,7 +226,7 @@ internal static partial class WindowsTelemetry
         }
 
         // The existing supervisor decodes the OS string using this wire key.
-        return new(DateTimeOffset.UtcNow, "Windows " + Environment.OSVersion.Version, applications.Values.Take(10).ToArray());
+        return new(DateTimeOffset.UtcNow, OperatingSystemName(), applications.Values.Take(10).ToArray());
     }
 
     private static string Clip(string value, int length) => value.Length <= length ? value : value[..length];

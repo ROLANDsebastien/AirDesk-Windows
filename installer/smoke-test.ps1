@@ -36,7 +36,9 @@ try {
     $origin = "chrome-extension://$id/"
     if ($hostManifest.allowed_origins -notcontains $origin) { throw "Identifiant d’extension non autorisé." }
 
-    $info = [Diagnostics.ProcessStartInfo]::new($binary)
+    $hostBinary = Join-Path (Split-Path $manifestPath) $hostManifest.path
+    if ((Split-Path $hostBinary -Leaf) -ne 'AirDeskBrowserHost.exe') { throw 'Le manifeste doit pointer vers le module Edge dédié.' }
+    $info = [Diagnostics.ProcessStartInfo]::new($hostBinary)
     $info.Arguments = "$origin --parent-window=0"
     $info.UseShellExecute = $false
     $info.RedirectStandardInput = $true

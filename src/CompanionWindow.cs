@@ -234,7 +234,7 @@ internal sealed class CompanionWindow : Form
             Row(PushButton("Exporter le bilan technique", () => Export("diagnostic", TechnicalReport())),
                 PushButton("Exporter les performances", () => Export("performances", companion.PerformanceReport()))),
             PushButton("Ouvrir le journal local", () => OpenFolder(companion.Root)),
-            Heading("Système et versions"), TextLabel("Windows " + Environment.OSVersion.Version),
+            Heading("Système et versions"), TextLabel(WindowsTelemetry.OperatingSystemName()),
             Row(inventoryButton, PushButton("Ouvrir Windows Update", () => OpenFolder("ms-settings:windowsupdate"))),
             scan, systemStatus);
         inventoryButton.Click += async (_, _) =>
@@ -290,7 +290,7 @@ internal sealed class CompanionWindow : Form
         var state = companion.State;
         return string.Join(Environment.NewLine,
             "AirDesk Companion Windows " + typeof(CompanionWindow).Assembly.GetName().Version,
-            "Windows " + Environment.OSVersion.Version,
+            WindowsTelemetry.OperatingSystemName(),
             $"Association : {(companion.Linked ? "active" : "à configurer")}",
             $"Démarrage à la connexion : {(IsStartupEnabled() ? "activé" : "désactivé")}",
             $"Pause : {state.Settings.Paused}",

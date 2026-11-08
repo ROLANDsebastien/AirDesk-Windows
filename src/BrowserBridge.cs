@@ -12,6 +12,10 @@ internal static class BrowserBridge
 {
     private static readonly string PipeName = "AirDeskCompanion.Browser." + System.Diagnostics.Process.GetCurrentProcess().SessionId;
     private const int MaximumMessage = 64 * 1024;
+    private static readonly JsonSerializerOptions MessageJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
 
     public static bool IsHostInvocation(string[] args)
     {
@@ -20,7 +24,7 @@ internal static class BrowserBridge
         try
         {
             using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "browser-host.json")));
-            return manifest.RootElement.GetProperty("allowed_origins").EnumerateArray().Any(item => item.GetString() == args[0]);
+            return manifest.RootElement.GetProperty("allowed_origins").EnumerateArray().Any(item => item.GetString() is { } origin && (origin == args[0] || origin == args[0] + "/"));
         }
         catch (Exception error) when (error is IOException or InvalidDataException or JsonException or KeyNotFoundException) { return false; }
     }
@@ -54,7 +58,7 @@ internal static class BrowserBridge
             var disconnected = 0;
             while (await Read<BrowserRequest>(input, default).ConfigureAwait(false) is { } request)
             {
-                var reply = new BrowserReply("status", false);
+                var reply = new BrowserReply("status", false, Reason: "companion_unreachable");
                 try
                 {
                     using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut,
@@ -63,6 +67,10 @@ internal static class BrowserBridge
                     await pipe.ConnectAsync(timeout.Token).ConfigureAwait(false);
                     await Write(pipe, request, timeout.Token).ConfigureAwait(false);
                     reply = await Read<BrowserReply>(pipe, timeout.Token).ConfigureAwait(false) ?? reply;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    reply = reply with { Reason = "companion_access_denied" };
                 }
                 catch (Exception error) when (error is IOException or OperationCanceledException) { }
 
@@ -83,12 +91,12 @@ internal static class BrowserBridge
         if (length is < 1 or > MaximumMessage) throw new InvalidDataException("Message navigateur invalide.");
         var buffer = new byte[length];
         await stream.ReadExactlyAsync(buffer, cancel).ConfigureAwait(false);
-        return JsonSerializer.Deserialize<T>(buffer, AirDeskClient.Local);
+        return JsonSerializer.Deserialize<T>(buffer, MessageJson);
     }
 
     private static async Task Write<T>(Stream stream, T value, CancellationToken cancel)
     {
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, AirDeskClient.Local);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(value, MessageJson);
         var header = new byte[sizeof(int)];
         BinaryPrimitives.WriteInt32LittleEndian(header, bytes.Length);
         await stream.WriteAsync(header, cancel).ConfigureAwait(false);

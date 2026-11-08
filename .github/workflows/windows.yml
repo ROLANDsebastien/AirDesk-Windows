@@ -34,6 +34,8 @@ jobs:
         run: |
           dotnet publish src/AirDesk.Companion.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish native-host/AirDesk.BrowserHost.csproj -c Release -r win-x64 --self-contained true -o artifacts/publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Créer l’installateur
         shell: pwsh
         run: |
