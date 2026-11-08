@@ -38,37 +38,12 @@ jobs:
           if (-not (Test-Path $iscc)) { throw 'Inno Setup absent du runner.' }
           & $iscc "/DAppVersion=$version" installer/AirDesk.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Vérifier installation, démarrage, collecte et désinstallation
+      - name: Vérifier l’installation, la capture et le pont de l’extension
         shell: pwsh
         run: |
-          $setup = Resolve-Path 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
-          $install = Join-Path $env:LOCALAPPDATA 'Programs\AirDesk Companion'
-          $journal = Join-Path $env:LOCALAPPDATA 'AirDesk Companion\journal.json'
-          $result = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-          if ($result.ExitCode -ne 0) { throw "Installation échouée ($($result.ExitCode))." }
-          $process = Start-Process (Join-Path $install 'AirDeskCompanion.exe') -PassThru
-          try {
-            $state = $null
-            for ($i = 0; $i -lt 30; $i++) {
-              Start-Sleep -Seconds 1
-              $process.Refresh()
-              if ($process.HasExited) { throw "Le compagnon s’est arrêté ($($process.ExitCode))." }
-              if ((Test-Path $journal) -and $process.MainWindowHandle -ne [IntPtr]::Zero) {
-                $state = Get-Content $journal -Raw | ConvertFrom-Json
-                if ($state.pending.Count -gt 0) { break }
-              }
-            }
-            if (-not $state.installationId -or -not $state.latest.id -or $state.pending.Count -lt 1) {
-              throw 'Aucune première observation locale détectée.'
-            }
-          } finally {
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id; $process.WaitForExit() }
-          }
-          $result = Start-Process (Join-Path $install 'unins000.exe') -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-          if ($result.ExitCode -ne 0 -or (Test-Path (Join-Path $install 'AirDeskCompanion.exe'))) {
-            throw 'Désinstallation échouée.'
-          }
-          if (-not (Test-Path $journal)) { throw 'Le journal local doit rester accessible après la désinstallation.' }
+          node --check extension/background.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: AirDesk-Companion-Windows-x64-Setup
@@ -81,5 +56,5 @@ jobs:
         shell: pwsh
         run: |
           $exe = 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
-          gh release create $env:GITHUB_REF_NAME $exe --verify-tag --prerelease --title "AirDesk Companion Windows $env:GITHUB_REF_NAME" --notes "Pilote Windows x64. Installeur autonome et non signé. Après installation, ouvrez AirDesk Companion et saisissez un code généré dans AirDesk."
+          gh release create $env:GITHUB_REF_NAME $exe --verify-tag --prerelease --title "AirDesk Companion Windows $env:GITHUB_REF_NAME" --notes "Pilote Windows x64. Installeur autonome et non signé. Après installation, ouvrez AirDesk Companion, saisissez un code AirDesk et utilisez Activité et sites > Configurer l’extension Edge."
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

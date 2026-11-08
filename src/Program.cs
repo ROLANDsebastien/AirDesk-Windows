@@ -9,6 +9,12 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0].StartsWith("chrome-extension://", StringComparison.Ordinal))
+        {
+            if (BrowserBridge.IsHostInvocation(args)) BrowserBridge.RunHost().GetAwaiter().GetResult();
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
         bool trayOnly = args.Contains("--tray", StringComparer.OrdinalIgnoreCase);
         using var mutex = new Mutex(true, InstanceName, out bool first);

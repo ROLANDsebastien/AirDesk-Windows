@@ -13,6 +13,7 @@ internal sealed class CompanionWindow : Form
 
     private readonly Companion companion;
     private readonly EventWaitHandle showRequest;
+    private readonly CancellationTokenSource browserStop = new();
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
     private readonly NotifyIcon tray;
     private readonly Icon icon;
@@ -32,17 +33,22 @@ internal sealed class CompanionWindow : Form
     private readonly CheckBox pause = Toggle("Mettre la collecte en pause");
     private readonly CheckBox startup = Toggle("Démarrer AirDesk à l’ouverture de session Windows");
     private readonly CheckBox apps = Toggle("Suivre l’application au premier plan");
-    private readonly CheckBox sites = Toggle("Suivre les domaines dans Edge et Chrome");
+    private readonly CheckBox sites = Toggle("Suivre les domaines avec l’extension Edge");
     private readonly CheckBox links = Toggle("Conserver les adresses complètes des sites suivis");
     private readonly TextBox excluded = new() { Width = 370, PlaceholderText = "exemple.be, banque.be" };
     private readonly Button saveExcluded = PushButton("Enregistrer");
     private readonly NumericUpDown idle = Number(1, 30);
     private readonly CheckBox periodic = Toggle("Capturer l’écran principal à intervalle régulier");
     private readonly CheckBox appChange = Toggle("Capturer lors d’un changement d’application");
-    private readonly CheckBox siteChange = Toggle("Capturer lors d’un changement de site (Edge et Chrome)");
+    private readonly CheckBox siteChange = Toggle("Capturer lors d’un changement de site dans le navigateur");
     private readonly CheckBox cloud = Toggle("Envoyer les nouvelles captures aux comptes associés");
     private readonly NumericUpDown interval = Number(1, 60);
     private readonly Button capture = PushButton("Capturer maintenant");
+    private readonly ComboBox retention = new() { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly ListBox captures = new() { Width = 405, Height = 115, SelectionMode = SelectionMode.MultiExtended };
+    private readonly Label systemStatus = TextLabel("");
+    private readonly Button scan = PushButton("Rechercher les mises à jour Windows");
+    private LocalCapture[] displayedCaptures = [];
     private Account[] displayedAccounts = [];
     private IntPtr notificationWindow;
     private IntPtr displayNotification;
@@ -78,6 +84,7 @@ internal sealed class CompanionWindow : Form
         tabs.TabPages.Add(StatusTab());
         tabs.TabPages.Add(PrivacyTab());
         tabs.TabPages.Add(CaptureTab());
+        tabs.TabPages.Add(SystemTab());
         Controls.Add(tabs);
 
         var settings = companion.State.Settings;
@@ -89,6 +96,17 @@ internal sealed class CompanionWindow : Form
             box.CheckedChanged += (_, _) => SaveSettings();
         idle.ValueChanged += (_, _) => SaveSettings();
         interval.ValueChanged += (_, _) => SaveSettings();
+        retention.SelectedIndexChanged += (_, _) =>
+        {
+            if (refreshing || retention.SelectedItem is not int limit) return;
+            if (limit < companion.State.Captures.Length &&
+                !Confirm($"Conserver les {limit:N0} images les plus récentes et supprimer les autres sur ce PC ?"))
+            {
+                UpdateView();
+                return;
+            }
+            companion.SettingsChanged(companion.State.Settings with { CaptureLimit = limit });
+        };
 
         companion.Changed += UpdateView;
         timer.Tick += (_, _) =>
@@ -101,6 +119,7 @@ internal sealed class CompanionWindow : Form
     public void Start(bool trayOnly)
     {
         _ = Handle; // Receive session and power events even while the window is hidden.
+        _ = BrowserBridge.Serve((request, cancel) => InvokeAsync(() => companion.ReceiveBrowser(request), cancel), browserStop.Token);
         if (!trayOnly) Reveal();
         timer.Start();
     }
@@ -145,7 +164,7 @@ internal sealed class CompanionWindow : Form
     {
         var (page, panel) = Tab("Activité et sites");
         Add(panel, Heading("Activité Windows"), apps, Row(TextLabel("Inactivité après"), idle, TextLabel("minutes")),
-            Heading("Navigation"), sites, links,
+            Heading("Navigation"), PushButton("Configurer l’extension Edge", ConfigureEdge), sites, links,
             TextLabel("Les domaines exclus et leurs sous-domaines sont ignorés, y compris pour les captures déclenchées par un changement de site."),
             Row(excluded, saveExcluded), privacyStatus);
         saveExcluded.Click += (_, _) =>
@@ -166,15 +185,20 @@ internal sealed class CompanionWindow : Form
     private TabPage CaptureTab()
     {
         var (page, panel) = Tab("Captures");
+        retention.Items.AddRange([500, 1000, 5000]);
         Add(panel, Heading("Écran principal"), periodic, Row(TextLabel("Intervalle"), interval, TextLabel("minutes")),
             appChange, siteChange, cloud, captureStatus,
             Row(capture, PushButton("Ouvrir les captures", () => OpenFolder(Path.Combine(companion.Root, "Captures")))),
-            PushButton("Supprimer les captures locales", () =>
+            Row(TextLabel("Nombre maximal d’images"), retention),
+            TextLabel("Les captures expirent au bout de 7 jours."), captures,
+            Row(PushButton("Ouvrir la sélection", OpenSelectedCapture),
+                PushButton("Supprimer la sélection", DeleteSelectedCaptures)),
+            PushButton("Supprimer toutes les captures locales", () =>
             {
                 if (Confirm("Supprimer toutes les captures de ce PC ? Les images déjà envoyées se gèrent depuis AirDesk."))
                     companion.DeleteLocalCaptures();
-            }),
-            TextLabel("Les captures locales sont conservées jusqu’à 7 jours, dans la limite de 200 images."));
+            }));
+        captures.DoubleClick += (_, _) => OpenSelectedCapture();
         capture.Click += (_, _) =>
         {
             // Let the companion window disappear before a manual screenshot.
@@ -192,23 +216,111 @@ internal sealed class CompanionWindow : Form
         return page;
     }
 
+    private TabPage SystemTab()
+    {
+        var (page, panel) = Tab("Système");
+        var inventoryButton = PushButton("Actualiser l’inventaire");
+        Add(panel, Heading("Diagnostic"), TextLabel("Les exports restent sur ce PC et excluent les liens, images et identifiants."),
+            Row(PushButton("Exporter le bilan technique", () => Export("diagnostic", TechnicalReport())),
+                PushButton("Exporter les performances", () => Export("performances", companion.PerformanceReport()))),
+            PushButton("Ouvrir le journal local", () => OpenFolder(companion.Root)),
+            Heading("Système et versions"), TextLabel("Windows " + Environment.OSVersion.Version),
+            Row(inventoryButton, PushButton("Ouvrir Windows Update", () => OpenFolder("ms-settings:windowsupdate"))),
+            scan, systemStatus);
+        inventoryButton.Click += async (_, _) =>
+        {
+            inventoryButton.Enabled = false;
+            try { systemStatus.Text = await companion.RefreshInventory(); }
+            catch (Exception) { systemStatus.Text = "Inventaire Windows indisponible."; }
+            finally { inventoryButton.Enabled = true; }
+        };
+        scan.Click += async (_, _) =>
+        {
+            scan.Enabled = false;
+            systemStatus.Text = "Recherche Windows Update en cours…";
+            try { systemStatus.Text = await Task.Run(WindowsUpdate.Search); }
+            finally { scan.Enabled = true; }
+        };
+        return page;
+    }
+
+    private void ConfigureEdge()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Extension Edge");
+        try { Clipboard.SetText(path); }
+        catch (ExternalException) { }
+        OpenFolder(path);
+        OpenFolder("microsoft-edge:edge://extensions");
+        MessageBox.Show(this, "Dans Edge, ouvrez edge://extensions, activez le Mode développeur, puis cliquez sur Charger l’extension décompressée. Sélectionnez ce dossier :\n\n" + path,
+            AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void OpenSelectedCapture()
+    {
+        if (captures.SelectedItem is CaptureItem item)
+            OpenFolder(Path.Combine(companion.Root, "Captures", item.Capture.Id.ToString("N") + ".jpg"));
+    }
+
+    private void DeleteSelectedCaptures()
+    {
+        var selected = captures.SelectedItems.OfType<CaptureItem>().Select(item => item.Capture.Id).ToHashSet();
+        if (selected.Count > 0 && Confirm($"Supprimer {selected.Count} image(s) de ce PC ? Les copies déjà envoyées restent accessibles depuis AirDesk."))
+            companion.DeleteLocalCaptures(selected);
+    }
+
+    private string TechnicalReport()
+    {
+        var state = companion.State;
+        return string.Join(Environment.NewLine,
+            "AirDesk Companion Windows " + typeof(CompanionWindow).Assembly.GetName().Version,
+            "Windows " + Environment.OSVersion.Version,
+            $"Association : {(companion.Linked ? "active" : "à configurer")}",
+            $"Démarrage à la connexion : {(IsStartupEnabled() ? "activé" : "désactivé")}",
+            $"Pause : {state.Settings.Paused}",
+            $"Mesures en attente : {state.Pending.Length}",
+            $"Dernier envoi confirmé : {state.LastSent?.ToLocalTime():g}",
+            $"Captures locales : {state.Captures.Length}",
+            $"Captures en attente : {state.Captures.Count(item => item.CloudPending)}",
+            $"Capture possible : {companion.CaptureAllowed}",
+            companion.SiteStatus,
+            companion.Error ?? companion.SyncStatus);
+    }
+
+    private void Export(string name, string text)
+    {
+        using var dialog = new SaveFileDialog { FileName = $"AirDesk-Companion-{name}.txt", Filter = "Fichiers texte (*.txt)|*.txt" };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try { File.WriteAllText(dialog.FileName, text); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "Le rapport n’a pas pu être enregistré.", AppTitle);
+        }
+    }
+
     private void SaveSettings()
     {
         if (refreshing) return;
         var settings = companion.State.Settings;
-        if (cloud.Checked && !settings.SyncCaptures &&
-            !Confirm("Partager les nouvelles captures avec les comptes associés à ce PC ?"))
-        {
-            UpdateView();
-            return;
-        }
-        companion.SettingsChanged(settings with
+        var prompt = cloud.Checked && !settings.SyncCaptures ? "Partager les nouvelles captures avec les comptes associés à ce PC ?"
+            : periodic.Checked && !settings.PeriodicCapture ? "Activer les captures périodiques de l’écran principal ?"
+            : appChange.Checked && !settings.CaptureOnAppChange ? "Activer les captures lorsque l’application au premier plan change ?"
+            : siteChange.Checked && !settings.CaptureOnSiteChange ? "Activer les captures quand le site actif change ?"
+            : sites.Checked && !settings.TrackSites ? "Enregistrer les domaines de l’onglet actif transmis par l’extension ?"
+            : links.Checked && !settings.FullLinks ? "Autoriser la lecture des adresses complètes des onglets suivis ?"
+            : null;
+        var newSettings = settings with
         {
             TrackApps = apps.Checked, TrackSites = sites.Checked, FullLinks = links.Checked,
             PeriodicCapture = periodic.Checked, CaptureOnAppChange = appChange.Checked,
             CaptureOnSiteChange = siteChange.Checked, SyncCaptures = cloud.Checked,
             IdleMinutes = (int)idle.Value, CaptureMinutes = (int)interval.Value
-        });
+        };
+        if (prompt is not null && !Confirm(prompt))
+        {
+            UpdateView();
+            return;
+        }
+        companion.SettingsChanged(newSettings);
     }
 
     private void SetPaused(bool paused) =>
@@ -231,6 +343,7 @@ internal sealed class CompanionWindow : Form
             appChange.Checked = settings.CaptureOnAppChange;
             siteChange.Checked = settings.CaptureOnSiteChange;
             cloud.Checked = settings.SyncCaptures;
+            retention.SelectedItem = settings.CaptureLimit;
             idle.Value = Math.Clamp(settings.IdleMinutes, (int)idle.Minimum, (int)idle.Maximum);
             interval.Value = Math.Clamp(settings.CaptureMinutes, (int)interval.Minimum, (int)interval.Maximum);
             summary.Text = companion.Error ?? (companion.Linked
@@ -247,7 +360,7 @@ internal sealed class CompanionWindow : Form
             accountStatus.Text = companion.AccountStatus ?? "";
             captureStatus.Text = $"{state.Captures.Length} image(s) locale(s) · {state.Captures.Count(item => item.CloudPending)} en attente d’envoi\n" +
                 (companion.CaptureStatus ?? (companion.CaptureAllowed ? "Capture disponible" : "Capture suspendue"));
-            privacyStatus.Text = companion.SiteStatus ?? "Suivi des sites désactivé";
+            privacyStatus.Text = companion.SiteStatus;
             link.Text = companion.Linked ? "Ajouter un compte" : "Associer";
             link.Enabled = !companion.Busy && companion.Error is null;
             refresh.Enabled = companion.Linked && !companion.Busy;
@@ -256,6 +369,21 @@ internal sealed class CompanionWindow : Form
             captureMenu.Enabled = capture.Enabled = companion.CaptureAllowed;
             pauseMenu.Text = settings.Paused ? "Reprendre la collecte" : "Mettre en pause";
             tray.Text = AppTitle + (settings.Paused ? " · En pause" : " · " + activityName);
+            if (!ReferenceEquals(displayedCaptures, state.Captures))
+            {
+                var selected = captures.SelectedItems.OfType<CaptureItem>().Select(item => item.Capture.Id).ToHashSet();
+                displayedCaptures = state.Captures;
+                captures.BeginUpdate();
+                try
+                {
+                    captures.Items.Clear();
+                    captures.Items.AddRange(displayedCaptures.Reverse().Select(item => new CaptureItem(item)).ToArray());
+                    for (var i = 0; i < captures.Items.Count; i++)
+                        if (captures.Items[i] is CaptureItem item && selected.Contains(item.Capture.Id))
+                            captures.SetSelected(i, true);
+                }
+                finally { captures.EndUpdate(); }
+            }
             if (!ReferenceEquals(displayedAccounts, companion.Accounts))
             {
                 displayedAccounts = companion.Accounts;
@@ -381,6 +509,7 @@ internal sealed class CompanionWindow : Form
     {
         if (disposing)
         {
+            browserStop.Cancel();
             companion.Changed -= UpdateView;
             timer.Dispose();
             tray.ContextMenuStrip?.Dispose();
@@ -428,6 +557,12 @@ internal sealed class CompanionWindow : Form
         return button;
     }
     private static NumericUpDown Number(int minimum, int maximum) => new() { Minimum = minimum, Maximum = maximum, Width = 58 };
+    private sealed record CaptureItem(LocalCapture Capture)
+    {
+        public override string ToString() => Capture.CapturedAt.LocalDateTime.ToString("g") +
+            (Capture.CloudPending ? " · en attente d’envoi" : "");
+    }
+
     private sealed record AccountItem(Account Account)
     {
         public override string ToString() => Account.Email ?? Account.Id.ToString();

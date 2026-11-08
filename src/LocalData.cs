@@ -15,6 +15,7 @@ internal sealed record Settings
     public bool CaptureOnAppChange { get; init; }
     public bool CaptureOnSiteChange { get; init; }
     public bool SyncCaptures { get; init; }
+    public int CaptureLimit { get; init; } = 5_000;
     public int CaptureMinutes { get; init; } = 15;
     public int IdleMinutes { get; init; } = 5;
 }
@@ -89,7 +90,7 @@ internal sealed class LocalData
     public string CapturePath(Guid id) => Path.Combine(Captures, id.ToString("N") + ".jpg");
     public void SaveCapture(Guid id, byte[] data) => WriteAtomic(CapturePath(id), data);
 
-    private static void WriteAtomic(string path, byte[] bytes)
+    internal static void WriteAtomic(string path, byte[] bytes)
     {
         var temporary = path + ".tmp";
         using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))

@@ -9,6 +9,7 @@ namespace AirDesk.Companion;
 internal sealed class Companion : IDisposable
 {
     private readonly LocalData data;
+    private readonly PerformanceJournal performance;
     private readonly AirDeskClient api = new();
     private readonly CancellationTokenSource shutdown = new();
     private CancellationTokenSource? captureUpload;
@@ -20,7 +21,6 @@ internal sealed class Companion : IDisposable
     private bool credentialUnavailable;
     private bool credentialRejected;
     private bool networkBusy;
-    private bool browserBusy;
     private bool sleeping;
     private bool locked;
     private bool displayOff;
@@ -28,7 +28,9 @@ internal sealed class Companion : IDisposable
     private DateTimeOffset? bootAt;
     private DateTimeOffset nextSample;
     private DateTimeOffset nextCapture;
-    private DateTimeOffset nextBrowser;
+    private DateTimeOffset lastBrowserContact;
+    private DateTimeOffset lastWebsite;
+    private (string Value, IntPtr Window, long Generation, DateTimeOffset Expires)? browserGrant;
     private DateTimeOffset nextCleanup;
     private DateTimeOffset nextSchedule;
     private DateTimeOffset nextInventory;
@@ -48,9 +50,10 @@ internal sealed class Companion : IDisposable
     public string? SyncStatus { get; private set; }
     public string? CaptureStatus { get; private set; }
     public string? AccountStatus { get; private set; }
-    public string? SiteStatus => State.Settings.TrackSites || State.Settings.CaptureOnSiteChange
-        ? website is null ? "En attente d’un site dans Edge ou Chrome" : "Site actif reconnu"
-        : null;
+    public string SiteStatus => DateTimeOffset.UtcNow - lastBrowserContact > TimeSpan.FromSeconds(6)
+        ? "Extension Edge en attente de connexion."
+        : website is not null ? "Extension connectée · site actif reconnu."
+        : "Extension connectée · en attente d’un onglet web actif.";
     public bool CaptureAllowed => Error is null && !State.Settings.Paused && SessionAvailable() &&
         PolicyAllows(DateTimeOffset.UtcNow);
     public event Action? Changed;
@@ -58,6 +61,7 @@ internal sealed class Companion : IDisposable
     public Companion(LocalData data)
     {
         this.data = data;
+        performance = new(data.Root);
         State = data.Read();
         ResetCapture();
         try { registration = data.ReadRegistration(); }
@@ -74,6 +78,7 @@ internal sealed class Companion : IDisposable
         var previous = State.Settings;
         if (previous == settings || !Save(State with { Settings = settings })) return;
         if (!settings.SyncCaptures) captureUpload?.Cancel();
+        if (settings.CaptureLimit != previous.CaptureLimit) PruneCaptures(DateTimeOffset.UtcNow);
         ResetCapture();
         if (settings.Paused != previous.Paused || settings.IdleMinutes != previous.IdleMinutes) nextSample = default;
         Changed?.Invoke();
@@ -99,7 +104,7 @@ internal sealed class Companion : IDisposable
         previousApp = null;
         websiteApp = null;
         website = null;
-        nextBrowser = default;
+        browserGrant = null;
         nextCapture = DateTimeOffset.UtcNow.AddMinutes(State.Settings.CaptureMinutes);
     }
 
@@ -116,15 +121,11 @@ internal sealed class Companion : IDisposable
             (settings.TrackSites || settings.CaptureOnAppChange || settings.CaptureOnSiteChange));
         var app = needForeground ? WindowsTelemetry.ReadForeground() : null;
 
-        if (!sensitive || app?.Window != websiteApp?.Window)
+        if (!sensitive || app?.Window != websiteApp?.Window || now - lastWebsite > TimeSpan.FromSeconds(5))
         {
             websiteApp = app;
             website = null;
         }
-
-        if (sensitive && app is not null && WindowsTelemetry.IsSupportedBrowser(app) &&
-            (settings.TrackSites || settings.CaptureOnSiteChange) && !browserBusy && now >= nextBrowser)
-            _ = PollWebsite(app, settings, privacyGeneration);
 
         if (now >= nextCleanup)
         {
@@ -135,6 +136,7 @@ internal sealed class Companion : IDisposable
         if (now >= nextSample)
         {
             nextSample = now.AddSeconds(15);
+            performance.Sample(now);
             var state = settings.Paused ? "paused" : !available ? "asleep" : idle is null ? "unknown" : active ? "active" : "idle";
             Record(now, state, idle, settings.TrackApps && active ? app : null, settings.TrackSites && sensitive ? website : null);
         }
@@ -158,25 +160,41 @@ internal sealed class Companion : IDisposable
         Changed?.Invoke();
     }
 
-    private async Task PollWebsite(Foreground app, Settings settings, long generation)
+    public BrowserReply ReceiveBrowser(BrowserRequest request)
     {
-        browserBusy = true;
-        nextBrowser = DateTimeOffset.UtcNow.AddSeconds(3);
-        Website? next;
-        try { next = await Task.Run(() => WindowsTelemetry.ReadWebsite(app, settings.FullLinks, settings.ExcludedDomains)); }
-        catch (Exception) { next = null; }
-        finally { browserBusy = false; }
-        if (shutdown.IsCancellationRequested || privacyGeneration != generation || websiteApp?.Window != app.Window ||
-            WindowsTelemetry.GetForegroundWindow() != app.Window || !CaptureAllowed) return;
-        var previous = website;
-        website = next;
         var now = DateTimeOffset.UtcNow;
-        if (settings.CaptureOnSiteChange && previous is not null && next is not null && previous != next &&
-            WindowsTelemetry.IdleSeconds() < settings.IdleMinutes * 60 && now >= lastEventCapture.AddSeconds(30))
+        lastBrowserContact = now;
+        var settings = State.Settings;
+        var status = new BrowserReply("status", true);
+        if ((!settings.TrackSites && !settings.CaptureOnSiteChange) || !CaptureAllowed ||
+            !(WindowsTelemetry.IdleSeconds() < settings.IdleMinutes * 60)) return status;
+
+        var app = WindowsTelemetry.ReadForeground();
+        if (app is null || !WindowsTelemetry.IsSupportedBrowser(app)) return status;
+        if (request.Type == "check" && request.Focused)
+        {
+            var grant = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+            browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2));
+            return new("permission", true, grant, settings.FullLinks);
+        }
+
+        if (request.Type != "site" || browserGrant is not { } issued || request.Grant != issued.Value)
+            return status;
+        browserGrant = null;
+        if (issued.Window != app.Window || issued.Generation != privacyGeneration || now >= issued.Expires)
+            return status;
+
+        var previous = websiteApp?.Window == app.Window && now - lastWebsite <= TimeSpan.FromSeconds(5) ? website : null;
+        websiteApp = app;
+        lastWebsite = now;
+        website = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
+        if (settings.CaptureOnSiteChange && previous is not null && website is not null && previous != website &&
+            now >= lastEventCapture.AddSeconds(30))
         {
             lastEventCapture = now;
             TakeCapture(automatic: true);
         }
+        return status;
     }
 
     private void Record(DateTimeOffset now, string state, double? idle, Foreground? app, Website? site)
@@ -220,7 +238,11 @@ internal sealed class Companion : IDisposable
             if (!CaptureAllowed) return;
             data.SaveCapture(item.Id, image);
             if (!Save(State with { Captures = State.Captures.Append(item).ToArray() })) File.Delete(data.CapturePath(item.Id));
-            else CaptureStatus = $"Dernière capture locale à {now.LocalDateTime:t}.";
+            else
+            {
+                performance.Capture(image.Length);
+                CaptureStatus = $"Dernière capture locale à {now.LocalDateTime:t}.";
+            }
             PruneCaptures(now);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or
@@ -238,16 +260,33 @@ internal sealed class Companion : IDisposable
         Changed?.Invoke();
     }
 
+    public void DeleteLocalCaptures(HashSet<Guid> selected)
+    {
+        captureUpload?.Cancel();
+        try
+        {
+            foreach (var item in State.Captures.Where(item => selected.Contains(item.Id)))
+                File.Delete(data.CapturePath(item.Id));
+            if (Save(State with { Captures = State.Captures.Where(item => !selected.Contains(item.Id)).ToArray() }))
+                CaptureStatus = "Sélection supprimée de ce PC.";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            CaptureStatus = "Suppression incomplète. Réessayez.";
+        }
+        Changed?.Invoke();
+    }
+
     private void PruneCaptures(DateTimeOffset now, bool all = false)
     {
         try
         {
-            var retained = all ? [] : State.Captures.Where(item => item.CapturedAt > now.AddDays(-7)).TakeLast(200).ToArray();
+            var retained = all ? [] : State.Captures.Where(item => item.CapturedAt > now.AddDays(-7)).TakeLast(Math.Clamp(State.Settings.CaptureLimit, 500, 5000)).ToArray();
             var keep = retained.Select(item => item.Id.ToString("N") + ".jpg").ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var path in Directory.EnumerateFiles(data.Captures))
                 if ((Path.GetExtension(path) is ".jpg" or ".tmp") && !keep.Contains(Path.GetFileName(path))) File.Delete(path);
             if (retained.Length != State.Captures.Length) Save(State with { Captures = retained });
-            if (all) CaptureStatus = "Captures locales supprimées.";
+            if (all && Error is null) CaptureStatus = "Captures locales supprimées.";
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
@@ -384,7 +423,10 @@ internal sealed class Companion : IDisposable
                     var accepted = await api.Upload(id, token, batch, shutdown.Token);
                     if (accepted.Count == 0) throw new InvalidDataException("Aucune mesure confirmée.");
                     if (Save(State with { LastSent = DateTimeOffset.UtcNow, Pending = State.Pending.Where(item => !accepted.Contains(item.Id)).ToArray() }))
+                    {
+                        performance.Delivery(accepted.Count);
                         SyncStatus = "Dernier envoi confirmé.";
+                    }
                 }, "Mesures en attente. AirDesk réessaiera automatiquement.", activity: true);
 
             if (Linked && Error is null && State.Settings.SyncCaptures && captureRetry.Due(now) &&
@@ -398,7 +440,12 @@ internal sealed class Companion : IDisposable
                         var path = data.CapturePath(capture.Id);
                         if (File.Exists(path))
                         {
-                            try { await api.UploadCapture(id, token, capture, File.ReadAllBytes(path), cancel.Token); }
+                            try
+                            {
+                                var image = File.ReadAllBytes(path);
+                                await api.UploadCapture(id, token, capture, image, cancel.Token);
+                                performance.ImageDelivery(image.Length);
+                            }
                             catch (ServerException error) when (error.Code == "capture_deleted") { }
                         }
                         Save(State with { Captures = State.Captures.Select(item =>
@@ -491,10 +538,22 @@ internal sealed class Companion : IDisposable
         }
     }
 
+    public string PerformanceReport() => performance.Export();
+
+    public async Task<string> RefreshInventory()
+    {
+        var inventory = await Task.Run(WindowsTelemetry.Inventory, shutdown.Token);
+        nextInventory = default;
+        reportRetry.RequestNow();
+        return $"{inventory.OsVersion} · inventaire du {inventory.CollectedAt.LocalDateTime:g}\n" +
+            string.Join("\n", inventory.Applications.Select(app => app.Name + " · " + (app.Version ?? "version inconnue")));
+    }
+
     public void Dispose()
     {
         shutdown.Cancel();
         api.Dispose();
+        performance.Dispose();
     }
 
     private sealed class Retry

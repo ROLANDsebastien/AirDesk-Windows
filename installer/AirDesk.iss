@@ -1,7 +1,7 @@
 #define AppName "AirDesk Companion"
 #define AppExe "AirDeskCompanion.exe"
 #ifndef AppVersion
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.2.0"
 #endif
 
 [Setup]
@@ -33,11 +33,17 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Files]
 Source: "..\artifacts\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+Source: "browser-host.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\extension\*"; DestDir: "{app}\Extension Edge"; Flags: ignoreversion recursesubdirs createallsubdirs
+
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AirDeskCompanion"; Flags: uninsdeletevalue
+
+Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.airdesk.companion"; ValueType: string; ValueData: "{app}\browser-host.json"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.airdesk.companion"; ValueType: string; ValueData: "{app}\browser-host.json"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Ouvrir AirDesk Companion"; Flags: nowait postinstall skipifsilent
