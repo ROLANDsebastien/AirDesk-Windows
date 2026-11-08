@@ -15,7 +15,7 @@ Compagnon natif qui envoie ses mesures au même superviseur AirDesk que le compa
 2. Dans Edge, ouvrez `edge://extensions`, activez le **Mode développeur**, puis choisissez **Charger l’extension décompressée**. Sélectionnez le dossier **Extension Edge** indiqué par le compagnon.
 3. Activez le suivi des domaines dans le compagnon, puis affichez une page web dans Edge. Le statut du compagnon indique la connexion de l’extension et la reconnaissance du site actif.
 
-L’extension utilise la messagerie native Chromium. Le même dossier peut être chargé dans Chrome depuis `chrome://extensions`. L’installation de ce pilote se fait depuis le dossier fourni par l’installateur.
+L’extension utilise la messagerie native Chromium. Le même dossier peut être chargé dans Chrome depuis `chrome://extensions`. L’installation de ce pilote se fait depuis le dossier fourni par l’installateur. Après une mise à jour du compagnon, utilisez le bouton **Recharger** sur l’extension dans le navigateur.
 
 ## Partager un PC avec deux comptes AirDesk
 

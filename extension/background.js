@@ -1,4 +1,5 @@
 const host = "com.airdesk.companion";
+const browser = navigator.userAgent.includes("Edg/") ? "msedge" : "chrome";
 let port;
 let timer;
 let checking = false;
@@ -30,7 +31,7 @@ async function check() {
   checking = true;
   try {
     const window = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (connection === port) connection.postMessage({ type: "check", focused: window.focused && !window.incognito });
+    if (connection === port) connection.postMessage({ type: "check", browser, normalWindow: !window.incognito && window.state !== "minimized", focused: window.focused });
   } catch {
     // A browser window may close during a query.
   } finally {
@@ -44,7 +45,7 @@ async function share(message, connection) {
   if (message.type !== "permission" || typeof message.grant !== "string") return;
   try {
     const window = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (!window.focused || window.incognito) return;
+    if (window.incognito || window.state === "minimized" || (!window.focused && !message.matchTitle)) return;
     const [tab] = await chrome.tabs.query({ active: true, windowId: window.id });
     if (connection !== port || tab?.incognito) return;
     let address = null;
@@ -54,8 +55,11 @@ async function share(message, connection) {
         address = message.fullLinks ? url.href : url.origin;
     }
     const latest = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (connection === port && latest.id === window.id && latest.focused)
-      connection.postMessage({ type: tab?.pendingUrl ? "pending" : "site", grant: message.grant, url: address });
+    if (connection === port && latest.id === window.id && !latest.incognito && latest.state !== "minimized" && (latest.focused || message.matchTitle)) {
+      const report = { type: tab?.pendingUrl ? "pending" : "site", grant: message.grant, url: address };
+      if (message.matchTitle && address) report.title = tab.title?.slice(0, 500);
+      connection.postMessage(report);
+    }
   } catch {
     // Unavailable or non-web tabs are ignored.
   }

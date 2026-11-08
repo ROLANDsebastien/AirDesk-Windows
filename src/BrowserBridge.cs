@@ -5,8 +5,8 @@ using System.Text.Json;
 
 namespace AirDesk.Companion;
 
-internal sealed record BrowserRequest(string Type, bool Focused, string? Grant, string? Url);
-internal sealed record BrowserReply(string Type, bool Connected, string? Grant = null, bool FullLinks = false);
+internal sealed record BrowserRequest(string Type, bool Focused, string? Grant, string? Url, string? Browser, bool NormalWindow, string? Title);
+internal sealed record BrowserReply(string Type, bool Connected, string? Grant = null, bool FullLinks = false, bool MatchTitle = false);
 
 internal static class BrowserBridge
 {

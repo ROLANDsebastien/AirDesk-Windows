@@ -34,6 +34,13 @@ internal static partial class WindowsTelemetry
     [DllImport("wtsapi32.dll")] internal static extern bool WTSRegisterSessionNotification(IntPtr window, uint flags);
     [DllImport("wtsapi32.dll")] internal static extern bool WTSUnRegisterSessionNotification(IntPtr window);
 
+    private delegate bool WindowVisitor(IntPtr window, IntPtr context);
+    [DllImport("user32.dll")] private static extern bool EnumWindows(WindowVisitor visit, IntPtr context);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int capacity);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder title, int capacity);
+
     internal static readonly Guid SessionDisplayStatus = new("2b84c20e-ad23-4ddf-93db-05ffbd7efca5");
     public static DateTimeOffset BootAt { get; } = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
 
@@ -83,6 +90,45 @@ internal static partial class WindowsTelemetry
     public static bool IsSupportedBrowser(Foreground app) =>
         app.Process.Equals("msedge", StringComparison.OrdinalIgnoreCase) ||
         app.Process.Equals("chrome", StringComparison.OrdinalIgnoreCase);
+
+    public static bool HasSingleBrowserWindow(Foreground browser)
+    {
+        int count = 0;
+        bool foundForeground = false;
+        var name = new StringBuilder(64);
+        EnumWindows((window, _) =>
+        {
+            if (!IsWindowVisible(window) || IsIconic(window) ||
+                GetClassName(window, name, name.Capacity) == 0 || name.ToString() != "Chrome_WidgetWin_1" ||
+                GetWindowThreadProcessId(window, out var id) == 0) return true;
+            try
+            {
+                using var process = Process.GetProcessById((int)id);
+                if (process.ProcessName.Equals(browser.Process, StringComparison.OrdinalIgnoreCase))
+                {
+                    count++;
+                    foundForeground |= window == browser.Window;
+                }
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            catch (System.ComponentModel.Win32Exception) { count = 2; }
+            return count < 2;
+        }, IntPtr.Zero);
+        return count == 1 && foundForeground;
+    }
+
+    public static bool MatchesBrowserTitle(Foreground browser, string? tabTitle)
+    {
+        if (string.IsNullOrWhiteSpace(tabTitle) || tabTitle.Length > 500 ||
+            GetForegroundWindow() != browser.Window || !HasSingleBrowserWindow(browser)) return false;
+        var caption = new StringBuilder(1024);
+        if (GetWindowText(browser.Window, caption, caption.Capacity) == 0) return false;
+        var title = caption.ToString();
+        // Only corroborate the active browser frame. Never retain its window title.
+        return title == tabTitle || title.StartsWith(tabTitle + " - ", StringComparison.Ordinal) ||
+            title.StartsWith(tabTitle + " – ", StringComparison.Ordinal);
+    }
 
     public static Website? ParseWebsite(string? value, bool fullLinks, string[] excluded)
     {

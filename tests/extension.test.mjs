@@ -8,7 +8,7 @@ const event = () => ({ addListener() {} });
 
 function extension() {
   const focused = { id: 14, focused: true, incognito: false };
-  const tab = { id: 29, active: true, url: "https://example.test/path?private=value" };
+  const tab = { id: 29, active: true, title: "Example", url: "https://example.test/path?private=value" };
   const messages = [];
   let reads = 0;
   let listener;
@@ -24,7 +24,7 @@ function extension() {
     windows: { getLastFocused: async () => focused, onFocusChanged: event() },
     tabs: { onActivated: event(), onUpdated: event(), async query() { reads++; return [tab]; } }
   };
-  vm.runInNewContext(source, { chrome, URL, setInterval() {}, clearInterval() {} });
+  vm.runInNewContext(source, { chrome, URL, navigator: { userAgent: "Edg/100" }, setInterval() {}, clearInterval() {} });
   return {
     focused, tab, messages, get reads() { return reads; },
     async receive(message) { listener(message); await new Promise(resolve => setImmediate(resolve)); }
@@ -34,7 +34,7 @@ function extension() {
 test("requires permission before reading the active tab", async () => {
   const worker = extension();
   await worker.receive({ type: "status", connected: true });
-  assert.deepEqual(worker.messages, [{ type: "check", focused: true }]);
+  assert.deepEqual(worker.messages, [{ type: "check", browser: "msedge", normalWindow: true, focused: true }]);
   assert.equal(worker.reads, 0);
 });
 
@@ -75,4 +75,11 @@ test("marks an in-progress navigation without forwarding its URL", async () => {
   worker.tab.pendingUrl = "https://pending.test";
   await worker.receive({ type: "permission", grant: "test", fullLinks: true });
   assert.deepEqual(worker.messages.at(-1), { type: "pending", grant: "test", url: null });
+});
+
+test("includes a title only when Windows requests foreground corroboration", async () => {
+  const worker = extension();
+  worker.focused.focused = false;
+  await worker.receive({ type: "permission", grant: "test", matchTitle: true });
+  assert.deepEqual(worker.messages.at(-1), { type: "site", grant: "test", url: "https://example.test", title: "Example" });
 });

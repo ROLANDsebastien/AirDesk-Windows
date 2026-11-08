@@ -30,7 +30,7 @@ internal sealed class Companion : IDisposable
     private DateTimeOffset nextCapture;
     private DateTimeOffset lastBrowserContact;
     private DateTimeOffset lastWebsite;
-    private (string Value, IntPtr Window, long Generation, DateTimeOffset Expires)? browserGrant;
+    private (string Value, IntPtr Window, long Generation, DateTimeOffset Expires, bool MatchTitle)? browserGrant;
     private DateTimeOffset nextCleanup;
     private DateTimeOffset nextSchedule;
     private DateTimeOffset nextInventory;
@@ -174,11 +174,13 @@ internal sealed class Companion : IDisposable
 
         var app = WindowsTelemetry.ReadForeground();
         if (app is null || !WindowsTelemetry.IsSupportedBrowser(app)) return status;
-        if (request.Type == "check" && request.Focused)
+        if (request.Type == "check" && request.NormalWindow && request.Browser == app.Process.ToLowerInvariant())
         {
+            bool matchTitle = !request.Focused;
+            if (matchTitle && !WindowsTelemetry.HasSingleBrowserWindow(app)) return status;
             var grant = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-            browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2));
-            return new("permission", true, grant, settings.FullLinks);
+            browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2), matchTitle);
+            return new("permission", true, grant, settings.FullLinks, matchTitle);
         }
 
         if (request.Type is not ("site" or "pending") || browserGrant is not { } issued || request.Grant != issued.Value)
@@ -195,6 +197,11 @@ internal sealed class Companion : IDisposable
             return status;
         }
 
+        if (issued.MatchTitle && request.Url is not null && !WindowsTelemetry.MatchesBrowserTitle(app, request.Title))
+        {
+            website = lastSettledSite = null;
+            return status;
+        }
         lastWebsite = now;
         website = lastSettledSite = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
         if (settings.CaptureOnSiteChange && previous is not null && website is not null && previous != website &&
