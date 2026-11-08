@@ -89,28 +89,44 @@ internal static partial class WindowsTelemetry
             if (GetForegroundWindow() != app.Window || !IsInputDesktop()) return null;
             var root = AutomationElement.FromHandle(app.Window);
             // Only inspect Chromium's toolbar address edit. Never read document fields or window titles.
-            var toolbars = root.FindAll(TreeScope.Descendants,
-                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ToolBar));
-            foreach (AutomationElement toolbar in toolbars)
+            foreach (var edit in AddressControls(root))
             {
-                var edits = toolbar.FindAll(TreeScope.Children,
-                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
-                foreach (AutomationElement edit in edits)
-                {
-                    var properties = edit.Current;
-                    bool knownAddress = properties.AutomationId is "addressEditBox" or "omnibox" or "address-bar"
-                        || properties.Name is "Address and search bar" or "Barre d’adresse et de recherche"
-                        or "Barre d'adresse et de recherche" or "Barre d'adresse et de recherche Google";
-                    if (!knownAddress || properties.HasKeyboardFocus || properties.IsOffscreen ||
-                        !edit.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern)) continue;
-                    var value = ((ValuePattern)pattern).Current.Value;
-                    if (GetForegroundWindow() != app.Window || !IsInputDesktop()) return null;
-                    return ParseWebsite(value, fullLinks, excluded);
-                }
+                var properties = edit.Current;
+                bool knownAddress = properties.AutomationId is "addressEditBox" or "omnibox" or "address-bar"
+                    || properties.Name is "Address and search bar" or "Barre d’adresse et de recherche"
+                    or "Barre d'adresse et de recherche" or "Barre d'adresse et de recherche Google";
+                if (!knownAddress || properties.HasKeyboardFocus || properties.IsOffscreen ||
+                    !edit.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern)) continue;
+                var value = ((ValuePattern)pattern).Current.Value;
+                if (GetForegroundWindow() != app.Window || !IsInputDesktop()) return null;
+                return ParseWebsite(value, fullLinks, excluded);
             }
         }
         catch (Exception error) when (error is COMException or InvalidOperationException or ArgumentException) { }
         return null;
+    }
+
+    private static IEnumerable<AutomationElement> AddressControls(AutomationElement root)
+    {
+        var walker = TreeWalker.ControlViewWalker;
+        var pending = new Queue<(AutomationElement Element, bool InToolbar)>();
+        pending.Enqueue((root, false));
+        for (int visited = 0; pending.Count > 0 && visited < 256; visited++)
+        {
+            var (element, inToolbar) = pending.Dequeue();
+            var type = element.Current.ControlType;
+            // UI Automation also exposes controls from web pages. Never enter their document.
+            if (type == ControlType.Document) continue;
+            if (inToolbar && type == ControlType.Edit)
+            {
+                yield return element;
+                continue;
+            }
+
+            for (var child = walker.GetFirstChild(element); child is not null && pending.Count < 256;
+                child = walker.GetNextSibling(child))
+                pending.Enqueue((child, inToolbar || type == ControlType.ToolBar));
+        }
     }
 
     public static Website? ParseWebsite(string? value, bool fullLinks, string[] excluded)

@@ -25,6 +25,7 @@ internal sealed class Companion : IDisposable
     private bool locked;
     private bool displayOff;
     private long privacyGeneration;
+    private DateTimeOffset? bootAt;
     private DateTimeOffset nextSample;
     private DateTimeOffset nextCapture;
     private DateTimeOffset nextBrowser;
@@ -183,14 +184,22 @@ internal sealed class Companion : IDisposable
         var uptime = WindowsTelemetry.AwakeSeconds();
         if (uptime is null) return;
         var battery = state == "paused" ? null : WindowsTelemetry.ReadBattery();
-        var boot = WindowsTelemetry.BootAt;
-        var observation = new Observation(Guid.NewGuid(), now, uptime.Value, boot <= now ? boot : null, state, idle,
+        bootAt ??= ResolveBootAt(State.Latest, WindowsTelemetry.BootAt, uptime.Value);
+        var observation = new Observation(Guid.NewGuid(), now, uptime.Value, bootAt <= now ? bootAt : null, state, idle,
             app?.Id, app?.Name, site?.Domain, site?.Url, battery?.Percent, battery?.Charging, battery?.ExternalPower);
         var pending = State.Pending.Where(item => item.CapturedAt >= now.AddDays(-29)).Append(observation).TakeLast(5_760).ToArray();
         var linkBytes = pending.Sum(LinkBytes);
         int excess = 0;
         while (linkBytes > 2_000_000) linkBytes -= LinkBytes(pending[excess++]);
         Save(State with { Latest = observation, Pending = pending[excess..] });
+    }
+
+    internal static DateTimeOffset ResolveBootAt(Observation? previous, DateTimeOffset estimate, double awakeSeconds)
+    {
+        // Keep the same boot timestamp across a companion restart. The supervisor compares it exactly.
+        if (previous?.BootAt is { } saved && awakeSeconds >= previous.AwakeSeconds &&
+            Math.Abs((estimate - saved).TotalSeconds) < 10) return saved;
+        return estimate;
     }
 
     private static int LinkBytes(Observation item) => Encoding.UTF8.GetByteCount(item.BrowserUrl ?? "");
@@ -390,7 +399,7 @@ internal sealed class Companion : IDisposable
                         if (File.Exists(path))
                         {
                             try { await api.UploadCapture(id, token, capture, File.ReadAllBytes(path), cancel.Token); }
-                            catch (ServerException error) when (error.Code is "capture_deleted" or "capture_outside_schedule") { }
+                            catch (ServerException error) when (error.Code == "capture_deleted") { }
                         }
                         Save(State with { Captures = State.Captures.Select(item =>
                             item.Id == capture.Id ? item with { CloudPending = false } : item).ToArray() });
