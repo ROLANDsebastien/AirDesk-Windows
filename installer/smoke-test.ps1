@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Setup, [switch]$TestEdge)
+param([Parameter(Mandatory)][string]$Setup, [switch]$TestEdge, [string]$UiScreenshots)
 $ErrorActionPreference = 'Stop'
 $install = Join-Path $env:LOCALAPPDATA 'Programs\AirDesk Companion'
 $data = Join-Path $env:LOCALAPPDATA 'AirDesk Companion'
@@ -69,6 +69,11 @@ try {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'smoke-capture.ps1') -ProcessId $app.Id -DataPath $data
     if ($LASTEXITCODE -ne 0) { throw 'Test de capture échoué.' }
+
+    if ($UiScreenshots) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'smoke-ui.ps1') -ProcessId $app.Id -DataPath $data -Screenshots $UiScreenshots
+        if ($LASTEXITCODE -ne 0) { throw "Contrôle UI/UX échoué." }
+    }
 
     if ($TestEdge) {
         Stop-Process -Id $app.Id

@@ -51,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           try {
-            ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe' -TestEdge
+            ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe' -TestEdge -UiScreenshots 'artifacts/ui-review'
           } catch {
             Write-Host "::error::$($_.Exception.Message -replace '[\r\n]+',' ')"
             throw
@@ -61,6 +61,12 @@ jobs:
           name: AirDesk-Companion-Windows-x64-Setup
           path: artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe
           if-no-files-found: error
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: AirDesk-UI-Windows
+          path: artifacts/ui-review/*.png
+          if-no-files-found: ignore
       - name: Publier la préversion GitHub
         if: github.event_name == 'push' && github.ref_type == 'tag'
         env:

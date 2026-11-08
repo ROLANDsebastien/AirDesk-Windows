@@ -6,6 +6,8 @@ import http from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const [binary, data] = process.argv.slice(2);
 const edge = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles]
@@ -97,8 +99,22 @@ try {
   await command("Target.activateTarget", { targetId: page.targetId });
   const pageSession = (await command("Target.attachToTarget", { targetId: page.targetId, flatten: true })).sessionId;
   await command("Page.bringToFront", {}, pageSession);
-  await until(async () => (await readState()).pending.find(item => item.browserUrl === `${base}/first`),
-    "The foreground Edge URL was not recorded");
+  const system = await command("SystemInfo.getProcessInfo");
+  const browserPid = system.processInfo.find(info => info.type === "browser").id;
+  const focusScript = fileURLToPath(new URL("../installer/focus-edge.ps1", import.meta.url));
+  await promisify(execFile)("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", focusScript, "-ProcessId", String(browserPid)]);
+  try {
+    await until(async () => (await readState()).pending.find(item => item.browserUrl === `${base}/first`),
+      "The foreground Edge URL was not recorded");
+  } catch (error) {
+    const current = await readState();
+    const focus = await command("Runtime.evaluate", {
+      expression: "chrome.windows.getLastFocused({windowTypes:['normal']}).then(w => ({focused:w.focused,incognito:w.incognito}))",
+      awaitPromise: true, returnByValue: true
+    }, workerSession);
+    const { latest, settings } = current;
+    throw new Error(`${error.message}. Desktop state=${latest.state}, idle=${latest.idleSeconds}, app=${latest.appBundleId}, domain=${latest.browserDomain}, browser focused=${focus.result.value?.focused}, paused=${settings.paused}, tracking=${settings.trackSites}`);
+  }
   await command("Page.navigate", { url: `${base}/second` }, pageSession);
   await until(async () => {
     const updated = await readState();
