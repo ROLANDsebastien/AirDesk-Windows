@@ -169,38 +169,42 @@ internal sealed class Companion : IDisposable
         lastBrowserContact = now;
         var settings = State.Settings;
         var status = new BrowserReply("status", true);
-        if ((!settings.TrackSites && !settings.CaptureOnSiteChange) || !CaptureAllowed ||
-            !(WindowsTelemetry.IdleSeconds() < settings.IdleMinutes * 60)) return status;
+        if (!settings.TrackSites && !settings.CaptureOnSiteChange) return status with { Reason = "tracking_disabled" };
+        if (!CaptureAllowed || !(WindowsTelemetry.IdleSeconds() < settings.IdleMinutes * 60))
+            return status with { Reason = "session_unavailable" };
 
         var app = WindowsTelemetry.ReadForeground();
-        if (app is null || !WindowsTelemetry.IsSupportedBrowser(app)) return status;
-        if (request.Type == "check" && request.NormalWindow && request.Browser == app.Process.ToLowerInvariant())
+        if (app is null || !WindowsTelemetry.IsSupportedBrowser(app)) return status with { Reason = "browser_not_in_foreground" };
+        if (request.Type == "check")
         {
+            if (!request.NormalWindow) return status with { Reason = "window_unavailable" };
+            if (!string.Equals(request.Browser, app.Process, StringComparison.OrdinalIgnoreCase))
+                return status with { Reason = "browser_mismatch" };
             bool matchTitle = !request.Focused;
-            if (matchTitle && !WindowsTelemetry.HasSingleBrowserWindow(app)) return status;
+            if (matchTitle && !WindowsTelemetry.HasSingleBrowserWindow(app)) return status with { Reason = "window_not_unique" };
             var grant = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
             browserGrant = (grant, app.Window, privacyGeneration, now.AddSeconds(2), matchTitle);
             return new("permission", true, grant, settings.FullLinks, matchTitle);
         }
 
         if (request.Type is not ("site" or "pending") || browserGrant is not { } issued || request.Grant != issued.Value)
-            return status;
+            return status with { Reason = "grant_missing" };
         browserGrant = null;
         if (issued.Window != app.Window || issued.Generation != privacyGeneration || now >= issued.Expires)
-            return status;
+            return status with { Reason = "grant_expired" };
 
         var previous = websiteApp?.Window == app.Window && now - lastWebsite <= TimeSpan.FromSeconds(12) ? lastSettledSite : null;
         websiteApp = app;
         if (request.Type == "pending")
         {
             website = null;
-            return status;
+            return status with { Reason = "navigation_pending" };
         }
 
         if (issued.MatchTitle && request.Url is not null && !WindowsTelemetry.MatchesBrowserTitle(app, request.Title))
         {
             website = lastSettledSite = null;
-            return status;
+            return status with { Reason = "window_title_mismatch" };
         }
         lastWebsite = now;
         website = lastSettledSite = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
@@ -210,7 +214,7 @@ internal sealed class Companion : IDisposable
             lastEventCapture = now;
             TakeCapture(automatic: true);
         }
-        return status;
+        return status with { Reason = website is null ? "site_ignored" : "site_recognized" };
     }
 
     private void Record(DateTimeOffset now, string state, double? idle, Foreground? app, Website? site)

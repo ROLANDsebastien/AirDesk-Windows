@@ -91,6 +91,9 @@ try {
     }, workerSession);
     return response.result.value === "✓";
   }, "Real Edge did not connect to the installed native host");
+  await command("Runtime.evaluate", {
+    expression: "globalThis.edgeTestReplies = []; port.onMessage.addListener(({type, reason}) => { edgeTestReplies.push(reason ?? type); if (edgeTestReplies.length > 20) edgeTestReplies.shift(); })"
+  }, workerSession);
   console.log("Edge service worker and native messaging verified.");
 
   const page = await until(async () => (await command("Target.getTargets")).targetInfos.find(
@@ -113,11 +116,11 @@ try {
   } catch (error) {
     const current = await readState();
     const focus = await command("Runtime.evaluate", {
-      expression: "chrome.windows.getLastFocused({windowTypes:['normal']}).then(w => ({focused:w.focused,incognito:w.incognito}))",
+      expression: "chrome.windows.getAll({windowTypes:['normal'],populate:true}).then(windows => ({browser, replies:edgeTestReplies, windows:windows.map(w => ({id:w.id,focused:w.focused,state:w.state,incognito:w.incognito,active:w.tabs.find(t=>t.active)?.url}))}))",
       awaitPromise: true, returnByValue: true
     }, workerSession);
     const { latest, settings } = current;
-    throw new Error(`${error.message}. Desktop state=${latest.state}, idle=${latest.idleSeconds}, app=${latest.appBundleId}, domain=${latest.browserDomain}, browser focused=${focus.result.value?.focused}, paused=${settings.paused}, tracking=${settings.trackSites}`);
+    throw new Error(`${error.message}. Desktop state=${latest.state}, idle=${latest.idleSeconds}, app=${latest.appBundleId}, domain=${latest.browserDomain}, Edge protocol=${JSON.stringify(focus.result.value)}, paused=${settings.paused}, tracking=${settings.trackSites}`);
   }
   await command("Page.navigate", { url: `${base}/second` }, pageSession);
   await until(async () => {
