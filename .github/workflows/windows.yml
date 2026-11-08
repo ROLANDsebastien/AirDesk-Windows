@@ -4,7 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
   push:
+    branches: [main]
     tags: ['v*']
+    paths: ['tests/**', 'installer/smoke-test.ps1', '.github/workflows/windows.yml']
 
 permissions:
   contents: read
@@ -22,6 +24,13 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
+      - name: Vérifier le protocole AirDesk et la confidentialité de l’extension
+        shell: pwsh
+        run: |
+          dotnet run --project tests/protocol/ProtocolChecks.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test tests/extension.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Compiler pour Windows x64
         shell: pwsh
         run: |
@@ -41,10 +50,8 @@ jobs:
       - name: Vérifier l’installation, la capture et le pont de l’extension
         shell: pwsh
         run: |
-          node --test tests/extension.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           try {
-            ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
+            ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe' -TestEdge
           } catch {
             Write-Host "::error::$($_.Exception.Message -replace '[\r\n]+',' ')"
             throw

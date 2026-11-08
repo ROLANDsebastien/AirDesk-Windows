@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Setup)
+param([Parameter(Mandatory)][string]$Setup, [switch]$TestEdge)
 $ErrorActionPreference = 'Stop'
 $install = Join-Path $env:LOCALAPPDATA 'Programs\AirDesk Companion'
 $data = Join-Path $env:LOCALAPPDATA 'AirDesk Companion'
@@ -69,6 +69,13 @@ try {
 
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'smoke-capture.ps1') -ProcessId $app.Id -DataPath $data
     if ($LASTEXITCODE -ne 0) { throw 'Test de capture échoué.' }
+
+    if ($TestEdge) {
+        Stop-Process -Id $app.Id
+        $app.WaitForExit()
+        node (Join-Path $PSScriptRoot '../tests/edge-live.mjs') $binary $data
+        if ($LASTEXITCODE -ne 0) { throw "Test Edge sur navigateur réel échoué." }
+    }
 } finally {
     if (-not $app.HasExited) { Stop-Process -Id $app.Id; $app.WaitForExit() }
 }
