@@ -41,9 +41,14 @@ jobs:
       - name: Vérifier l’installation, la capture et le pont de l’extension
         shell: pwsh
         run: |
-          node --check extension/background.js
+          node --test tests/extension.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
+          try {
+            ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
+          } catch {
+            Write-Host "::error::$($_.Exception.Message -replace '[\r\n]+',' ')"
+            throw
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: AirDesk-Companion-Windows-x64-Setup

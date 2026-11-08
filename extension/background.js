@@ -55,7 +55,7 @@ async function share(message, connection) {
     }
     const latest = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
     if (connection === port && latest.id === window.id && latest.focused)
-      connection.postMessage({ type: "site", grant: message.grant, url: address });
+      connection.postMessage({ type: tab?.pendingUrl ? "pending" : "site", grant: message.grant, url: address });
   } catch {
     // Unavailable or non-web tabs are ignored.
   }

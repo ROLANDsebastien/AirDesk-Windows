@@ -38,6 +38,7 @@ internal sealed class Companion : IDisposable
     private Foreground? previousApp;
     private Foreground? websiteApp;
     private Website? website;
+    private Website? lastSettledSite;
 
     public LocalState State { get; private set; }
     public bool Busy => networkBusy;
@@ -103,7 +104,7 @@ internal sealed class Companion : IDisposable
         privacyGeneration++;
         previousApp = null;
         websiteApp = null;
-        website = null;
+        website = lastSettledSite = null;
         browserGrant = null;
         nextCapture = DateTimeOffset.UtcNow.AddMinutes(State.Settings.CaptureMinutes);
     }
@@ -121,11 +122,13 @@ internal sealed class Companion : IDisposable
             (settings.TrackSites || settings.CaptureOnAppChange || settings.CaptureOnSiteChange));
         var app = needForeground ? WindowsTelemetry.ReadForeground() : null;
 
-        if (!sensitive || app?.Window != websiteApp?.Window || now - lastWebsite > TimeSpan.FromSeconds(5))
+        if (!sensitive || app?.Window != websiteApp?.Window)
         {
             websiteApp = app;
-            website = null;
+            website = lastSettledSite = null;
         }
+        if (now - lastWebsite > TimeSpan.FromSeconds(5)) website = null;
+        if (now - lastWebsite > TimeSpan.FromSeconds(12)) lastSettledSite = null;
 
         if (now >= nextCleanup)
         {
@@ -178,16 +181,22 @@ internal sealed class Companion : IDisposable
             return new("permission", true, grant, settings.FullLinks);
         }
 
-        if (request.Type != "site" || browserGrant is not { } issued || request.Grant != issued.Value)
+        if (request.Type is not ("site" or "pending") || browserGrant is not { } issued || request.Grant != issued.Value)
             return status;
         browserGrant = null;
         if (issued.Window != app.Window || issued.Generation != privacyGeneration || now >= issued.Expires)
             return status;
 
-        var previous = websiteApp?.Window == app.Window && now - lastWebsite <= TimeSpan.FromSeconds(5) ? website : null;
+        var previous = websiteApp?.Window == app.Window && now - lastWebsite <= TimeSpan.FromSeconds(12) ? lastSettledSite : null;
         websiteApp = app;
+        if (request.Type == "pending")
+        {
+            website = null;
+            return status;
+        }
+
         lastWebsite = now;
-        website = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
+        website = lastSettledSite = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
         if (settings.CaptureOnSiteChange && previous is not null && website is not null && previous != website &&
             now >= lastEventCapture.AddSeconds(30))
         {

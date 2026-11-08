@@ -34,7 +34,7 @@ try {
     } finally { $sha.Dispose() }
     $id = -join ($hash[0..15] | ForEach-Object { [char](97 + ($_ -shr 4)); [char](97 + ($_ -band 15)) })
     $origin = "chrome-extension://$id/"
-    if ($hostManifest.allowed_origins -notcontains $origin) { throw 'Identifiant d’extension non autorisé.' }
+    if ($hostManifest.allowed_origins -notcontains $origin) { throw "Identifiant d’extension non autorisé." }
 
     $info = [Diagnostics.ProcessStartInfo]::new($binary)
     $info.Arguments = "$origin --parent-window=0"
