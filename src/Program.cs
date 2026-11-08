@@ -15,6 +15,7 @@ internal static class Program
             return;
         }
 
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = System.Globalization.CultureInfo.GetCultureInfo("fr-BE");
         ApplicationConfiguration.Initialize();
         bool trayOnly = args.Contains("--tray", StringComparer.OrdinalIgnoreCase);
         using var mutex = new Mutex(true, InstanceName, out bool first);

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AirDesk Companion",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Partage le site de l’onglet actif avec le compagnon AirDesk Windows quand le suivi est activé.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAskQY/WT81JtBZqEfoUz7GbR8pUU77sYnFC08ztbyXIMk5kTQJ65wfzR4Mcvf1+jE3Epykz0YUS2yCaaHUfI7Vg5nK7BVF+tkSk14evbyKgtdCUoFiF1hGlu8HS1uAaPNq+HTKOnylKjV+YQR9Dcd79BVhckyAM6p71c3T2NsxBLJ19yTUNgL96riprwrMZd3zTCEuiopsya/cjDZZVvegVtVs2207YcMDjj8VtOJCUrhu3HMHba+oOmyc1FMWJ/0U/F33cUqhtWScYchiJHUWYRMW0bltjXLl9W57yhmnIdqZ+TbPR8CTzqMzzUJ1P0gFTPSUoTyrKKsB7qX9mhqnQIDAQAB",
   "permissions": [

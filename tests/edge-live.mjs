@@ -103,6 +103,10 @@ try {
   const browserPid = system.processInfo.find(info => info.type === "browser").id;
   const focusScript = fileURLToPath(new URL("../installer/focus-edge.ps1", import.meta.url));
   await promisify(execFile)("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", focusScript, "-ProcessId", String(browserPid)]);
+  await command("Runtime.evaluate", {
+    expression: `chrome.tabs.query({}).then(tabs => chrome.windows.update(tabs.find(tab => tab.url === ${JSON.stringify(base + "/first")}).windowId, {focused:true}))`,
+    awaitPromise: true
+  }, workerSession);
   try {
     await until(async () => (await readState()).pending.find(item => item.browserUrl === `${base}/first`),
       "The foreground Edge URL was not recorded");

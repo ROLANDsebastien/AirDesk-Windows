@@ -4,9 +4,7 @@ on:
   pull_request:
   workflow_dispatch:
   push:
-    branches: [main]
     tags: ['v*']
-    paths: ['tests/**', 'installer/smoke-test.ps1', '.github/workflows/windows.yml']
 
 permissions:
   contents: read

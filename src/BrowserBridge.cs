@@ -51,6 +51,7 @@ internal static class BrowserBridge
         using var output = Console.OpenStandardOutput();
         try
         {
+            var disconnected = 0;
             while (await Read<BrowserRequest>(input, default).ConfigureAwait(false) is { } request)
             {
                 var reply = new BrowserReply("status", false);
@@ -66,6 +67,8 @@ internal static class BrowserBridge
                 catch (Exception error) when (error is IOException or OperationCanceledException) { }
 
                 await Write(output, reply, default).ConfigureAwait(false);
+                disconnected = reply.Connected ? 0 : disconnected + 1;
+                if (disconnected >= 2) return;
             }
         }
         catch (Exception error) when (error is IOException or InvalidDataException or JsonException) { }

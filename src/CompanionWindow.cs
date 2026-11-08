@@ -24,12 +24,15 @@ internal sealed class CompanionWindow : Form
     private readonly Label accountStatus = TextLabel("");
     private readonly Label captureStatus = TextLabel("");
     private readonly Label privacyStatus = TextLabel("");
-    private readonly TextBox code = new() { Width = 285, MaxLength = 42, PlaceholderText = "Code à 32 caractères" };
+    private readonly TextBox code = new() { Width = 285, MaxLength = 42, PlaceholderText = "Code à 32 caractères", AccessibleName = "Code d’association AirDesk" };
     private readonly Button link = PushButton("Associer");
     private readonly Button refresh = PushButton("Actualiser les comptes");
     private readonly Button remove = PushButton("Retirer le compte");
     private readonly Button disconnect = PushButton("Arrêter les envois");
-    private readonly ListBox accounts = new() { Width = 410, Height = 76 };
+    private readonly ListBox accounts = new() { Width = 410, Height = 76, AccessibleName = "Comptes associés" };
+    private readonly Button retry = PushButton("Réessayer l’envoi");
+    private FlowLayoutPanel? accountActions;
+    private FlowLayoutPanel? syncActions;
     private readonly CheckBox pause = Toggle("Mettre la collecte en pause");
     private readonly CheckBox startup = Toggle("Démarrer AirDesk à l’ouverture de session Windows");
     private readonly CheckBox apps = Toggle("Suivre l’application au premier plan");
@@ -45,7 +48,10 @@ internal sealed class CompanionWindow : Form
     private readonly NumericUpDown interval = Number(1, 60);
     private readonly Button capture = PushButton("Capturer maintenant");
     private readonly ComboBox retention = new() { Width = 100, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly ListBox captures = new() { Width = 405, Height = 115, SelectionMode = SelectionMode.MultiExtended };
+    private readonly ListBox captures = new() { Width = 405, Height = 115, SelectionMode = SelectionMode.MultiExtended, AccessibleName = "Captures enregistrées sur ce PC" };
+    private readonly Button openImage = PushButton("Ouvrir l’image");
+    private readonly Button deleteImages = PushButton("Supprimer la sélection");
+    private readonly Button deleteAll = PushButton("Supprimer toutes les captures locales");
     private readonly Label systemStatus = TextLabel("");
     private readonly Button scan = PushButton("Rechercher les mises à jour Windows");
     private LocalCapture[] displayedCaptures = [];
@@ -127,10 +133,12 @@ internal sealed class CompanionWindow : Form
     private TabPage StatusTab()
     {
         var (page, panel) = Tab("État et comptes");
+        accountActions = Row(refresh, remove);
+        syncActions = Row(disconnect, retry);
+        retry.Click += (_, _) => companion.RetryNow();
         Add(panel, Heading("AirDesk Companion"), summary, activity, pause, startup,
             Heading("Associer ce PC"), TextLabel("Dans AirDesk, créez un code d’association et saisissez-le ici."),
-            Row(code, link), accountStatus, accounts, Row(refresh, remove), Row(disconnect,
-                PushButton("Réessayer l’envoi", () => companion.RetryNow())));
+            Row(code, link), accountStatus, accounts, accountActions, syncActions);
         link.Click += async (_, _) =>
         {
             var value = code.Text;
@@ -191,13 +199,15 @@ internal sealed class CompanionWindow : Form
             Row(capture, PushButton("Ouvrir les captures", () => OpenFolder(Path.Combine(companion.Root, "Captures")))),
             Row(TextLabel("Nombre maximal d’images"), retention),
             TextLabel("Les captures expirent au bout de 7 jours."), captures,
-            Row(PushButton("Ouvrir la sélection", OpenSelectedCapture),
-                PushButton("Supprimer la sélection", DeleteSelectedCaptures)),
-            PushButton("Supprimer toutes les captures locales", () =>
-            {
-                if (Confirm("Supprimer toutes les captures de ce PC ? Les images déjà envoyées se gèrent depuis AirDesk."))
-                    companion.DeleteLocalCaptures();
-            }));
+            Row(openImage, deleteImages), deleteAll);
+        openImage.Click += (_, _) => OpenSelectedCapture();
+        deleteImages.Click += (_, _) => DeleteSelectedCaptures();
+        deleteAll.Click += (_, _) =>
+        {
+            if (Confirm("Supprimer toutes les captures de ce PC ? Les images déjà envoyées se gèrent depuis AirDesk."))
+                companion.DeleteLocalCaptures();
+        };
+        captures.SelectedIndexChanged += (_, _) => UpdateCaptureActions();
         captures.DoubleClick += (_, _) => OpenSelectedCapture();
         capture.Click += (_, _) =>
         {
@@ -255,9 +265,16 @@ internal sealed class CompanionWindow : Form
             AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    private void UpdateCaptureActions()
+    {
+        openImage.Enabled = captures.SelectedItems.Count == 1;
+        deleteImages.Enabled = captures.SelectedItems.Count > 0;
+        deleteAll.Enabled = captures.Items.Count > 0;
+    }
+
     private void OpenSelectedCapture()
     {
-        if (captures.SelectedItem is CaptureItem item)
+        if (captures.SelectedItems.Count == 1 && captures.SelectedItem is CaptureItem item)
             OpenFolder(Path.Combine(companion.Root, "Captures", item.Capture.Id.ToString("N") + ".jpg"));
     }
 
@@ -320,7 +337,7 @@ internal sealed class CompanionWindow : Form
             UpdateView();
             return;
         }
-        companion.SettingsChanged(newSettings);
+        companion.SettingsChanged(newSettings with { Paused = companion.State.Settings.Paused });
     }
 
     private void SetPaused(bool paused) =>
@@ -356,16 +373,23 @@ internal sealed class CompanionWindow : Form
                 "active" => "Actif", "idle" => "Inactif", "paused" => "En pause",
                 "asleep" => "Session indisponible", _ => "Activité inconnue"
             };
-            activity.Text = $"{activityName} · {state.Pending.Length} mesure(s) en attente\n{companion.SyncStatus}";
+            var measures = state.Pending.Length <= 1 ? "mesure" : "mesures";
+            activity.Text = $"{activityName} · {state.Pending.Length} {measures} en attente";
+            if (companion.SyncStatus is { } sync) activity.Text += "\n" + sync;
             accountStatus.Text = companion.AccountStatus ?? "";
-            captureStatus.Text = $"{state.Captures.Length} image(s) locale(s) · {state.Captures.Count(item => item.CloudPending)} en attente d’envoi\n" +
+            var images = state.Captures.Length <= 1 ? "image locale" : "images locales";
+            captureStatus.Text = $"{state.Captures.Length} {images} · {state.Captures.Count(item => item.CloudPending)} en attente d’envoi\n" +
                 (companion.CaptureStatus ?? (companion.CaptureAllowed ? "Capture disponible" : "Capture suspendue"));
             privacyStatus.Text = companion.SiteStatus;
             link.Text = companion.Linked ? "Ajouter un compte" : "Associer";
             link.Enabled = !companion.Busy && companion.Error is null;
             refresh.Enabled = companion.Linked && !companion.Busy;
             remove.Enabled = companion.Linked && !companion.Busy && accounts.SelectedIndex >= 0;
+            accounts.Visible = companion.Linked;
+            accountActions!.Visible = companion.Linked;
+            syncActions!.Visible = companion.HasLocalAssociation;
             disconnect.Enabled = companion.HasLocalAssociation && !companion.Busy;
+            retry.Enabled = companion.Linked && !companion.Busy && state.Pending.Length > 0;
             captureMenu.Enabled = capture.Enabled = companion.CaptureAllowed;
             pauseMenu.Text = settings.Paused ? "Reprendre la collecte" : "Mettre en pause";
             tray.Text = AppTitle + (settings.Paused ? " · En pause" : " · " + activityName);
@@ -384,6 +408,7 @@ internal sealed class CompanionWindow : Form
                 }
                 finally { captures.EndUpdate(); }
             }
+            UpdateCaptureActions();
             if (!ReferenceEquals(displayedAccounts, companion.Accounts))
             {
                 displayedAccounts = companion.Accounts;
