@@ -20,7 +20,8 @@ using var client = new AirDeskClient(new Handler(async request =>
         "ingest" when body.GetProperty("observations")[0].GetProperty("app_bundle_id").GetString() == "windows.msedge"
             && !body.GetProperty("observations")[0].TryGetProperty("browser_url", out _) => $$"""{"acknowledged_ids":["{{id}}"]}""",
         "report-system" when body.GetProperty("report").GetProperty("inventory").GetProperty("macOSVersion").GetString() == "Windows"
-            && body.GetProperty("report").GetProperty("inventory").GetProperty("applications")[0].TryGetProperty("bundleID", out _) => """{"accepted":true}""",
+            && body.GetProperty("report").GetProperty("inventory").GetProperty("applications")[0].TryGetProperty("bundleID", out _)
+            && body.GetProperty("report").GetProperty("inventory").GetProperty("applicationIcons").GetProperty("windows.msedge").GetString() == "aWNvbg==" => """{"accepted":true}""",
         _ => throw new Exception("Unexpected protocol payload")
     };
 }));
@@ -41,7 +42,12 @@ Check(!policy.AllowsCapture(now), "Weekly privacy restriction");
 Check(policy.AllowsCapture(now.AddDays(7)), "Exception overrides weekly window");
 Check(!policy.AllowsCapture(DateTimeOffset.FromUnixTimeSeconds(1800000000)), "Expired schedule");
 Check((await client.Upload(device, token, [submitted], default)).SetEquals([id]), "Ingest confirmation");
-await client.Report(device, token, new { macOSVersion = "Windows", applications = new[] { new { BundleID = "windows.test" } } }, default);
+await client.Report(device, token, new
+{
+    macOSVersion = "Windows",
+    applications = new[] { new { BundleID = "windows.test" } },
+    ApplicationIcons = new Dictionary<string, string> { ["windows.msedge"] = "aWNvbg==" }
+}, default);
 Console.WriteLine("Pairing, telemetry acknowledgement, schedule exceptions, expiry and inventory JSON passed.");
 
 static void Check(bool passed, string message) { if (!passed) throw new Exception(message); }

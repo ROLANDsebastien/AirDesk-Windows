@@ -9,13 +9,13 @@ Compagnon natif qui envoie ses mesures au même superviseur AirDesk que le compa
 3. Dans le superviseur AirDesk, générez un code d’association. Ouvrez **AirDesk Companion** dans le menu Démarrer, collez le code et attendez le premier envoi confirmé. Le PC apparaît dans la liste des appareils distants avec le suffixe **Windows**.
 4. Activez le démarrage à l’ouverture de session et les options de collecte souhaitées dans le compagnon. Pour rouvrir la configuration, double-cliquez sur l’icône AirDesk dans la zone de notification. Fermer la fenêtre laisse le compagnon actif. Le menu **Quitter** arrête la collecte.
 
-## Installer l’extension Edge
+## Installer l’extension Edge ou Chrome
 
-1. Dans le compagnon, ouvrez **Activité et sites → Configurer l’extension Edge**. Le bouton ouvre le dossier inclus avec le compagnon et copie son chemin.
-2. Dans Edge, ouvrez `edge://extensions`, activez le **Mode développeur**, puis choisissez **Charger l’extension décompressée**. Sélectionnez le dossier **Extension Edge** indiqué par le compagnon.
-3. Activez le suivi des domaines dans le compagnon, puis affichez une page web dans Edge. Le statut du compagnon indique la connexion de l’extension et la reconnaissance du site actif.
+1. Dans **Activité et sites**, cliquez sur **Configurer l’extension Edge** ou **Configurer l’extension Chrome**. Le bouton ouvre le dossier inclus et copie son chemin.
+2. Ouvrez `edge://extensions` ou `chrome://extensions`, activez le **Mode développeur**, puis choisissez **Charger l’extension décompressée**. Sélectionnez le dossier **Extension Edge** indiqué par le compagnon. Les deux navigateurs utilisent ce même dossier.
+3. Activez le suivi des domaines dans le compagnon, puis affichez une page web dans le navigateur. Le statut du compagnon indique la connexion de l’extension et la reconnaissance du site actif.
 
-L’extension utilise la messagerie native Chromium. Le même dossier peut être chargé dans Chrome depuis `chrome://extensions`. L’installation de ce pilote se fait depuis le dossier fourni par l’installateur. Après une mise à jour du compagnon, utilisez le bouton **Recharger** sur l’extension dans le navigateur.
+L’extension utilise la messagerie native Chromium. Après une mise à jour du compagnon, utilisez le bouton **Recharger** sur l’extension dans le navigateur.
 
 ## Partager un PC avec deux comptes AirDesk
 

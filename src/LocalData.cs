@@ -31,6 +31,7 @@ internal sealed record LocalState
     public LocalCapture[] Captures { get; init; } = [];
     public DateTimeOffset? LastSent { get; init; }
     public ScheduleReceipt? Schedule { get; init; }
+    public Dictionary<string, string>? ApplicationIcons { get; init; }
 }
 
 internal sealed class LocalData

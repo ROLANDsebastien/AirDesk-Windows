@@ -74,5 +74,5 @@ jobs:
         shell: pwsh
         run: |
           $exe = 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe'
-          gh release create $env:GITHUB_REF_NAME $exe --verify-tag --prerelease --title "AirDesk Companion Windows $env:GITHUB_REF_NAME" --notes "Pilote Windows x64. Installeur autonome et non signé. Après installation, ouvrez AirDesk Companion, saisissez un code AirDesk et utilisez Activité et sites > Configurer l’extension Edge."
+          gh release create $env:GITHUB_REF_NAME $exe --verify-tag --prerelease --title "AirDesk Companion Windows $env:GITHUB_REF_NAME" --notes "Pilote Windows x64. Installeur autonome et non signé. Dans Activité et sites, choisissez Configurer l’extension Edge ou Configurer l’extension Chrome."
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

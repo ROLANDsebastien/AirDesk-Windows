@@ -66,6 +66,7 @@ $toggle.Toggle()
 
 Select-Tab 'Activité et sites'
 if (-not (Find-ByName "Configurer l’extension Edge")) { throw 'Accès à la configuration Edge absent.' }
+if (-not (Find-ByName "Configurer l’extension Chrome")) { throw 'Accès à la configuration Chrome absent.' }
 Snapshot '03-activite-et-sites'
 Select-Tab 'Captures'
 if (-not (Find-ByName 'Capturer maintenant')) { throw 'Commande de capture absente.' }

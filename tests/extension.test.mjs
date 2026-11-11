@@ -6,7 +6,7 @@ import vm from "node:vm";
 const source = await readFile(new URL("../extension/background.js", import.meta.url), "utf8");
 const event = () => ({ addListener() {} });
 
-function extension() {
+function extension(userAgent = "Edg/100") {
   const focused = { id: 14, focused: true, incognito: false };
   const tab = { id: 29, active: true, title: "Example", url: "https://example.test/path?private=value" };
   const messages = [];
@@ -24,7 +24,7 @@ function extension() {
     windows: { getLastFocused: async () => focused, onFocusChanged: event() },
     tabs: { onActivated: event(), onUpdated: event(), async query() { reads++; return [tab]; } }
   };
-  vm.runInNewContext(source, { chrome, URL, navigator: { userAgent: "Edg/100" }, setInterval() {}, clearInterval() {} });
+  vm.runInNewContext(source, { chrome, URL, navigator: { userAgent }, setInterval() {}, clearInterval() {} });
   return {
     focused, tab, messages, get reads() { return reads; },
     async receive(message) { listener(message); await new Promise(resolve => setImmediate(resolve)); }
@@ -36,6 +36,15 @@ test("requires permission before reading the active tab", async () => {
   await worker.receive({ type: "status", connected: true });
   assert.deepEqual(worker.messages, [{ type: "check", browser: "msedge", normalWindow: true, focused: true }]);
   assert.equal(worker.reads, 0);
+});
+
+test("identifies Chrome to the Windows companion and waits for permission", async () => {
+  const worker = extension("Mozilla/5.0 Chrome/130.0.0.0");
+  await worker.receive({ type: "status", connected: true });
+  assert.deepEqual(worker.messages, [{ type: "check", browser: "chrome", normalWindow: true, focused: true }]);
+  assert.equal(worker.reads, 0);
+  await worker.receive({ type: "permission", connected: true, grant: "chrome-test", fullLinks: false });
+  assert.deepEqual(worker.messages.at(-1), { type: "site", grant: "chrome-test", url: "https://example.test" });
 });
 
 test("sends domain only by default and keeps the one-time grant", async () => {

@@ -1,7 +1,7 @@
 #define AppName "AirDesk Companion"
 #define AppExe "AirDeskCompanion.exe"
 #ifndef AppVersion
-  #define AppVersion "0.2.7"
+  #define AppVersion "0.2.8"
 #endif
 
 [Setup]

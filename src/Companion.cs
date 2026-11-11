@@ -34,6 +34,9 @@ internal sealed class Companion : IDisposable
     private DateTimeOffset nextCleanup;
     private DateTimeOffset nextSchedule;
     private DateTimeOffset nextInventory;
+    private DateTimeOffset nextIconReport;
+    private bool readingApplicationIcon;
+    private readonly HashSet<string> attemptedApplicationIcons = new(StringComparer.Ordinal);
     private DateTimeOffset lastEventCapture;
     private Foreground? previousApp;
     private Foreground? websiteApp;
@@ -52,7 +55,7 @@ internal sealed class Companion : IDisposable
     public string? CaptureStatus { get; private set; }
     public string? AccountStatus { get; private set; }
     public string SiteStatus => DateTimeOffset.UtcNow - lastBrowserContact > TimeSpan.FromSeconds(6)
-        ? "Extension Edge en attente de connexion."
+        ? "Extension Edge ou Chrome en attente de connexion."
         : website is not null ? "Extension connectée · site actif reconnu."
         : "Extension connectée · en attente d’un onglet web actif.";
     public bool CaptureAllowed => Error is null && !State.Settings.Paused && SessionAvailable() &&
@@ -77,8 +80,17 @@ internal sealed class Companion : IDisposable
     public void SettingsChanged(Settings settings)
     {
         var previous = State.Settings;
-        if (previous == settings || !Save(State with { Settings = settings })) return;
+        if (previous == settings || !Save(State with
+        {
+            Settings = settings,
+            ApplicationIcons = settings.TrackApps ? State.ApplicationIcons : null
+        })) return;
         if (!settings.SyncCaptures) captureUpload?.Cancel();
+        if (settings.TrackApps != previous.TrackApps)
+        {
+            attemptedApplicationIcons.Clear();
+            nextInventory = default;
+        }
         if (settings.CaptureLimit != previous.CaptureLimit) PruneCaptures(DateTimeOffset.UtcNow);
         ResetCapture();
         if (settings.Paused != previous.Paused || settings.IdleMinutes != previous.IdleMinutes) nextSample = default;
@@ -230,6 +242,34 @@ internal sealed class Companion : IDisposable
         int excess = 0;
         while (linkBytes > 2_000_000) linkBytes -= LinkBytes(pending[excess++]);
         Save(State with { Latest = observation, Pending = pending[excess..] });
+        if (Error is null && app?.ExecutablePath is { } path && !readingApplicationIcon &&
+            State.ApplicationIcons?.ContainsKey(app.Id) != true)
+        {
+            if (attemptedApplicationIcons.Count >= 64) attemptedApplicationIcons.Clear();
+            if (attemptedApplicationIcons.Add(app.Id)) _ = CacheApplicationIcon(app.Id, path);
+        }
+    }
+
+    private async Task CacheApplicationIcon(string appId, string path)
+    {
+        readingApplicationIcon = true;
+        try
+        {
+            var icon = await Task.Run(() => WindowsTelemetry.ReadApplicationIcon(path));
+            if (icon is null || shutdown.IsCancellationRequested || !State.Settings.TrackApps || State.Settings.Paused) return;
+            var icons = State.ApplicationIcons is { } cached
+                ? new Dictionary<string, string>(cached) : new Dictionary<string, string>();
+            if (icons.Count >= 12)
+            {
+                var evicted = icons.Keys.First();
+                icons = icons.Skip(1).ToDictionary(pair => pair.Key, pair => pair.Value);
+                attemptedApplicationIcons.Remove(evicted);
+            }
+            icons[appId] = icon;
+            if (Save(State with { ApplicationIcons = icons }) && nextIconReport < nextInventory)
+                nextInventory = nextIconReport;
+        }
+        finally { readingApplicationIcon = false; }
     }
 
     internal static DateTimeOffset ResolveBootAt(Observation? previous, DateTimeOffset estimate, double awakeSeconds)
@@ -480,8 +520,15 @@ internal sealed class Companion : IDisposable
                     var inventory = await Task.Run(WindowsTelemetry.Inventory, shutdown.Token);
                     if (!State.Settings.Paused)
                     {
-                        await api.Report(id, token, inventory, shutdown.Token);
-                        nextInventory = DateTimeOffset.UtcNow.AddHours(24);
+                        var icons = State.Settings.TrackApps ? State.ApplicationIcons : null;
+                        try { await api.Report(id, token, inventory with { ApplicationIcons = icons }, shutdown.Token); }
+                        catch (ServerException error) when (icons is not null && error.Code == "invalid_report")
+                        {
+                            await api.Report(id, token, inventory, shutdown.Token);
+                        }
+                        var sentAt = DateTimeOffset.UtcNow;
+                        nextIconReport = sentAt.AddMinutes(5);
+                        nextInventory = ReferenceEquals(icons, State.ApplicationIcons) ? sentAt.AddHours(24) : nextIconReport;
                     }
                 }, "Inventaire indisponible.");
         }

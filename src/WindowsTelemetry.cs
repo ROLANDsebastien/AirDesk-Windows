@@ -9,12 +9,12 @@ using Microsoft.Win32;
 
 namespace AirDesk.Companion;
 
-internal sealed record Foreground(IntPtr Window, string Process, string Id, string Name);
+internal sealed record Foreground(IntPtr Window, string Process, string Id, string Name, string? ExecutablePath = null);
 internal sealed record Website(string Domain, string? Url);
 internal sealed record Battery(int Percent, bool Charging, bool ExternalPower);
 
 internal sealed record InstalledApp(string BundleID, string Name, string? Version);
-internal sealed record WindowsInventory(DateTimeOffset CollectedAt, [property: System.Text.Json.Serialization.JsonPropertyName("macOSVersion")] string OsVersion, InstalledApp[] Applications);
+internal sealed record WindowsInventory(DateTimeOffset CollectedAt, [property: System.Text.Json.Serialization.JsonPropertyName("macOSVersion")] string OsVersion, InstalledApp[] Applications, Dictionary<string, string>? ApplicationIcons = null);
 
 internal static partial class WindowsTelemetry
 {
@@ -77,14 +77,42 @@ internal static partial class WindowsTelemetry
             var name = process.ProcessName;
             var appId = "windows." + InvalidAppId().Replace(name.ToLowerInvariant(), "_");
             string? label = null;
-            try { label = process.MainModule?.FileVersionInfo.FileDescription; }
+            string? executablePath = null;
+            try
+            {
+                var module = process.MainModule;
+                executablePath = module?.FileName;
+                label = module?.FileVersionInfo.FileDescription;
+            }
             catch (System.ComponentModel.Win32Exception) { }
-            return new(window, name, Clip(appId, 200), Clip(Clean(label) ?? name, 100));
+            return new(window, name, Clip(appId, 200), Clip(Clean(label) ?? name, 100), executablePath);
         }
         catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
         {
             return null;
         }
+    }
+
+    internal static string? ReadApplicationIcon(string executablePath)
+    {
+        try
+        {
+            if (!Path.IsPathFullyQualified(executablePath) ||
+                !Path.GetExtension(executablePath).Equals(".exe", StringComparison.OrdinalIgnoreCase)) return null;
+            var root = Path.GetPathRoot(executablePath);
+            if (root is null || root.Length != 3 || new DriveInfo(root).DriveType != DriveType.Fixed) return null;
+            foreach (int size in new[] { 32, 24, 16 })
+            {
+                using var icon = Icon.ExtractIcon(executablePath, 0, size);
+                if (icon is null) return null;
+                using var bitmap = icon.ToBitmap();
+                using var png = new MemoryStream();
+                bitmap.Save(png, ImageFormat.Png);
+                if (png.Length <= 1536) return Convert.ToBase64String(png.ToArray());
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or ExternalException or NotSupportedException) { }
+        return null;
     }
 
     public static bool IsSupportedBrowser(Foreground app) =>

@@ -119,6 +119,13 @@ try {
   try {
     await until(async () => (await readInForeground()).pending.find(item => item.browserUrl === `${base}/first`),
       "The foreground Edge URL was not recorded");
+    const edgeIcon = await until(async () => (await readInForeground()).applicationIcons?.["windows.msedge"],
+      "The foreground Edge executable icon was not recorded");
+    const png = Buffer.from(edgeIcon, "base64");
+    assert.ok(png.length >= 45 && png.length <= 1536, "Edge icon exceeds its upload budget");
+    assert.equal(png.subarray(0, 16).toString("hex"), "89504e470d0a1a0a0000000d49484452");
+    const size = png.readUInt32BE(16);
+    assert.ok(size > 0 && size <= 32 && size === png.readUInt32BE(20), "Unexpected Edge icon dimensions");
     await command("Page.navigate", { url: `${base}/second` }, pageSession);
     await until(async () => {
       const updated = await readInForeground();
@@ -136,7 +143,7 @@ try {
     console.log("::error::" + diagnostic.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A"));
     throw new Error(diagnostic);
   }
-  console.log("Real Edge URL and screenshot on site change verified.");
+  console.log("Real Edge icon, URL and screenshot on site change verified.");
 } finally {
   socket?.close();
   await Promise.all([browser, app].map(process => new Promise(resolve => {

@@ -36,7 +36,7 @@ internal sealed class CompanionWindow : Form
     private readonly CheckBox pause = Toggle("Mettre la collecte en pause");
     private readonly CheckBox startup = Toggle("Démarrer AirDesk à l’ouverture de session Windows");
     private readonly CheckBox apps = Toggle("Suivre l’application au premier plan");
-    private readonly CheckBox sites = Toggle("Suivre les domaines avec l’extension Edge");
+    private readonly CheckBox sites = Toggle("Suivre les domaines avec l’extension Edge ou Chrome");
     private readonly CheckBox links = Toggle("Conserver les adresses complètes des sites suivis");
     private readonly TextBox excluded = new() { Width = 370, PlaceholderText = "exemple.be, banque.be" };
     private readonly Button saveExcluded = PushButton("Enregistrer");
@@ -172,7 +172,9 @@ internal sealed class CompanionWindow : Form
     {
         var (page, panel) = Tab("Activité et sites");
         Add(panel, Heading("Activité Windows"), apps, Row(TextLabel("Inactivité après"), idle, TextLabel("minutes")),
-            Heading("Navigation"), PushButton("Configurer l’extension Edge", ConfigureEdge), sites, links,
+            Heading("Navigation"), Row(
+                PushButton("Configurer l’extension Edge", () => ConfigureBrowser(edge: true)),
+                PushButton("Configurer l’extension Chrome", () => ConfigureBrowser(edge: false))), sites, links,
             TextLabel("Les domaines exclus et leurs sous-domaines sont ignorés, y compris pour les captures déclenchées par un changement de site."),
             Row(excluded, saveExcluded), privacyStatus);
         saveExcluded.Click += (_, _) =>
@@ -254,14 +256,21 @@ internal sealed class CompanionWindow : Form
         return page;
     }
 
-    private void ConfigureEdge()
+    private void ConfigureBrowser(bool edge)
     {
         var path = Path.Combine(AppContext.BaseDirectory, "Extension Edge");
         try { Clipboard.SetText(path); }
         catch (ExternalException) { }
         OpenFolder(path);
-        OpenFolder("microsoft-edge:edge://extensions");
-        MessageBox.Show(this, "Dans Edge, ouvrez edge://extensions, activez le Mode développeur, puis cliquez sur Charger l’extension décompressée. Sélectionnez ce dossier :\n\n" + path,
+        var browser = edge ? "Edge" : "Chrome";
+        var extensions = edge ? "edge://extensions" : "chrome://extensions";
+        if (edge) OpenFolder("microsoft-edge:edge://extensions");
+        else
+        {
+            try { Process.Start(new ProcessStartInfo("chrome.exe", extensions) { UseShellExecute = true }); }
+            catch (System.ComponentModel.Win32Exception) { }
+        }
+        MessageBox.Show(this, $"Dans {browser}, ouvrez {extensions}, activez le Mode développeur, puis cliquez sur Charger l’extension décompressée. Sélectionnez le dossier dont le chemin a été copié :\n\n{path}",
             AppTitle, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
