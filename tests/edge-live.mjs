@@ -102,12 +102,30 @@ try {
   }, workerSession);
   console.log("Edge service worker and native messaging verified.");
 
+  if (chrome) {
+    const setup = await command("Runtime.evaluate", {
+      expression: `(async () => {
+        const window = await chrome.windows.getLastFocused({ windowTypes: ["normal"], populate: true });
+        const fixture = await chrome.tabs.create({ windowId: window.id, active: true, url: ${JSON.stringify(`${base}/first`)} });
+        await chrome.tabs.remove(window.tabs.map(tab => tab.id));
+        return fixture.id;
+      })()`, awaitPromise: true, returnByValue: true
+    }, workerSession);
+    assert.equal(typeof setup.result.value, "number", "Chrome did not open a fixture tab");
+  }
   const page = await until(async () => (await command("Target.getTargets")).targetInfos.find(
     target => target.type === "page" && target.url === `${base}/first`
   ), "Fixture page did not open");
   await command("Target.activateTarget", { targetId: page.targetId });
   const pageSession = (await command("Target.attachToTarget", { targetId: page.targetId, flatten: true })).sessionId;
   await command("Page.bringToFront", {}, pageSession);
+  const waitForFixture = async () => {
+    await until(async () => {
+      const response = await command("Runtime.evaluate", { expression: "document.title", returnByValue: true }, pageSession);
+      return response.result.value === "AirDesk fixture";
+    }, "Fixture page title did not load");
+  };
+  await waitForFixture();
   const system = await command("SystemInfo.getProcessInfo");
   const browserPid = system.processInfo.find(info => info.type === "browser").id;
   const focusScript = fileURLToPath(new URL("../installer/focus-edge.ps1", import.meta.url));
@@ -135,10 +153,7 @@ try {
     assert.ok(size > 0 && size <= 32 && size === png.readUInt32BE(20), "Unexpected Edge icon dimensions");
     const navigation = await command("Page.navigate", { url: `${second}/second` }, pageSession);
     assert.equal(navigation.errorText, undefined);
-    await until(async () => {
-      const response = await command("Runtime.evaluate", { expression: "document.title", returnByValue: true }, pageSession);
-      return response.result.value === "AirDesk fixture";
-    }, "Second fixture page did not load");
+    await waitForFixture();
     await until(async () => {
       const updated = await readInForeground();
       return updated.captures.length > state.captures.length &&
