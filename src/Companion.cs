@@ -28,8 +28,10 @@ internal sealed class Companion : IDisposable
     private DateTimeOffset? bootAt;
     private DateTimeOffset nextSample;
     private DateTimeOffset nextCapture;
-    private DateTimeOffset lastBrowserContact;
+    private DateTimeOffset lastEdgeContact;
+    private DateTimeOffset lastChromeContact;
     private DateTimeOffset lastWebsite;
+    private DateTimeOffset nextSiteSample;
     private (string Value, IntPtr Window, long Generation, DateTimeOffset Expires, bool MatchTitle)? browserGrant;
     private DateTimeOffset nextCleanup;
     private DateTimeOffset nextSchedule;
@@ -54,13 +56,22 @@ internal sealed class Companion : IDisposable
     public string? SyncStatus { get; private set; }
     public string? CaptureStatus { get; private set; }
     public string? AccountStatus { get; private set; }
-    public string SiteStatus => DateTimeOffset.UtcNow - lastBrowserContact > TimeSpan.FromSeconds(6)
-        ? "Extension Edge ou Chrome en attente de connexion."
-        : website is not null ? "Extension connectée · site actif reconnu."
-        : "Extension connectée · en attente d’un onglet web actif.";
+    public string SiteStatus => !State.Settings.TrackSites && !State.Settings.CaptureOnSiteChange
+        ? "Suivi des sites et captures au changement de site désactivés."
+        : State.Settings.Paused ? "Suivi en pause."
+        : !PolicyAllows(DateTimeOffset.UtcNow) ? "Suivi des sites suspendu par le planning de confidentialité ou en attente du planning."
+        : BrowserStatus("Edge", "msedge", lastEdgeContact) + "\n" + BrowserStatus("Chrome", "chrome", lastChromeContact);
     public bool CaptureAllowed => Error is null && !State.Settings.Paused && SessionAvailable() &&
         PolicyAllows(DateTimeOffset.UtcNow);
     public event Action? Changed;
+
+    private string BrowserStatus(string label, string process, DateTimeOffset lastContact)
+    {
+        var status = DateTimeOffset.UtcNow - lastContact > TimeSpan.FromSeconds(6)
+            ? "en attente de connexion"
+            : website is not null && websiteApp?.Process == process ? "site actif reconnu" : "extension connectée";
+        return label + " · " + status;
+    }
 
     public Companion(LocalData data)
     {
@@ -137,7 +148,8 @@ internal sealed class Companion : IDisposable
         if (!sensitive || app?.Window != websiteApp?.Window)
         {
             websiteApp = app;
-            website = lastSettledSite = null;
+            website = null;
+            if (!sensitive) lastSettledSite = null;
         }
         if (now - lastWebsite > TimeSpan.FromSeconds(5)) website = null;
         if (now - lastWebsite > TimeSpan.FromSeconds(12)) lastSettledSite = null;
@@ -178,7 +190,11 @@ internal sealed class Companion : IDisposable
     public BrowserReply ReceiveBrowser(BrowserRequest request)
     {
         var now = DateTimeOffset.UtcNow;
-        lastBrowserContact = now;
+        if (request.Type == "check")
+        {
+            if (request.Browser == "msedge") lastEdgeContact = now;
+            if (request.Browser == "chrome") lastChromeContact = now;
+        }
         var settings = State.Settings;
         var status = new BrowserReply("status", true);
         if (!settings.TrackSites && !settings.CaptureOnSiteChange) return status with { Reason = "tracking_disabled" };
@@ -205,7 +221,7 @@ internal sealed class Companion : IDisposable
         if (issued.Window != app.Window || issued.Generation != privacyGeneration || now >= issued.Expires)
             return status with { Reason = "grant_expired" };
 
-        var previous = websiteApp?.Window == app.Window && now - lastWebsite <= TimeSpan.FromSeconds(12) ? lastSettledSite : null;
+        var previous = now - lastWebsite <= TimeSpan.FromSeconds(12) ? lastSettledSite : null;
         websiteApp = app;
         if (request.Type == "pending")
         {
@@ -220,6 +236,12 @@ internal sealed class Companion : IDisposable
         }
         lastWebsite = now;
         website = lastSettledSite = WindowsTelemetry.ParseWebsite(request.Url, settings.FullLinks, settings.ExcludedDomains);
+        if (settings.TrackSites && website is { } site && now >= nextSiteSample &&
+            (State.Latest?.BrowserDomain != site.Domain || State.Latest?.BrowserUrl != site.Url))
+        {
+            nextSiteSample = nextSample = now.AddSeconds(15);
+            Record(now, "active", WindowsTelemetry.IdleSeconds(), settings.TrackApps ? app : null, site);
+        }
         if (settings.CaptureOnSiteChange && previous is not null && website is not null && previous != website &&
             now >= lastEventCapture.AddSeconds(30))
         {

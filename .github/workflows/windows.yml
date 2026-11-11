@@ -4,6 +4,7 @@ on:
   pull_request:
   workflow_dispatch:
   push:
+    branches: ['codex/windows-browser-validation']
     tags: ['v*']
 
 permissions:
@@ -51,6 +52,12 @@ jobs:
         shell: pwsh
         run: |
           try {
+            $downloads = Invoke-RestMethod 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json'
+            $chrome = $downloads.channels.Stable.downloads.chrome | Where-Object platform -eq 'win64' | Select-Object -First 1
+            $zip = Join-Path $env:RUNNER_TEMP 'airdesk-chrome.zip'
+            Invoke-WebRequest $chrome.url -OutFile $zip
+            Expand-Archive $zip -DestinationPath $env:RUNNER_TEMP
+            $env:AIRDESK_TEST_CHROME = Join-Path $env:RUNNER_TEMP 'chrome-win64/chrome.exe'
             ./installer/smoke-test.ps1 -Setup 'artifacts/installer/AirDesk-Companion-Windows-x64-Setup.exe' -TestEdge -UiScreenshots 'artifacts/ui-review'
           } catch {
             Write-Host "::error::$($_.Exception.Message -replace '[\r\n]+',' ')"

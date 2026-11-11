@@ -10,15 +10,17 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const [binary, data] = process.argv.slice(2);
-const edge = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles]
+const chrome = process.env.AIRDESK_TEST_CHROME;
+const processName = chrome ? "chrome" : "msedge";
+const executable = chrome ?? [process.env["ProgramFiles(x86)"], process.env.ProgramFiles]
   .filter(Boolean).map(path => join(path, "Microsoft", "Edge", "Application", "msedge.exe"))
   .find(existsSync);
-assert.ok(edge, "Microsoft Edge is unavailable on the runner");
-const profile = await mkdtemp(join(tmpdir(), "airdesk-edge-"));
+assert.ok(executable && existsSync(executable), `Browser ${processName} is unavailable on the runner`);
+const profile = await mkdtemp(join(tmpdir(), "airdesk-browser-"));
 const journal = join(data, "journal.json");
 const readState = async () => JSON.parse(await readFile(journal, "utf8"));
 const state = await readState();
-Object.assign(state.settings, { trackSites: true, fullLinks: true, captureOnSiteChange: true, idleMinutes: 30 });
+Object.assign(state.settings, { trackSites: true, fullLinks: !chrome, captureOnSiteChange: true, idleMinutes: 30 });
 await writeFile(journal, JSON.stringify(state));
 const app = spawn(binary, ["--tray"], { stdio: "ignore" });
 const server = http.createServer((_, response) => {
@@ -27,9 +29,12 @@ const server = http.createServer((_, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const browser = spawn(edge, [
+const second = chrome ? base.replace("127.0.0.1", "localhost") : base;
+const browser = spawn(executable, [
   `--user-data-dir=${profile}`, "--remote-debugging-port=0", "--no-first-run",
-  "--no-default-browser-check", "--disable-background-networking", `${base}/first`
+  "--no-default-browser-check", "--disable-background-networking",
+  ...(chrome ? [`--load-extension=${join(dirname(binary), "Extension Edge")}`, "--host-resolver-rules=MAP localhost 127.0.0.1"] : []),
+  `${base}/first`
 ], { stdio: "ignore" });
 let socket;
 const pending = new Map();
@@ -67,7 +72,7 @@ try {
     if (!existsSync(devtoolsPath)) return null;
     const lines = (await readFile(devtoolsPath, "utf8")).trim().split(/\r?\n/);
     return lines.length >= 2 ? lines : null;
-  }, "Edge DevTools failed to start");
+  }, "Browser DevTools failed to start");
   socket = new WebSocket(`ws://127.0.0.1:${port}${route}`);
   await new Promise((resolve, reject) => {
     socket.addEventListener("open", resolve, { once: true });
@@ -79,18 +84,19 @@ try {
     pending.delete(reply.id);
     callback?.(reply);
   });
-  const installed = await command("Extensions.loadUnpacked", { path: join(dirname(binary), "Extension Edge") });
+  const installed = chrome ? { id: "pcmjjiolpfnkkomnkijaabopmlolgdea" } :
+    await command("Extensions.loadUnpacked", { path: join(dirname(binary), "Extension Edge") });
   assert.ok(installed.id, "Edge did not return an extension ID");
   const worker = await until(async () => (await command("Target.getTargets")).targetInfos.find(
     target => target.type === "service_worker" && target.url === `chrome-extension://${installed.id}/background.js`
-  ), "Edge did not start the service worker");
+  ), "Browser did not start the service worker");
   const workerSession = (await command("Target.attachToTarget", { targetId: worker.targetId, flatten: true })).sessionId;
   await until(async () => {
     const response = await command("Runtime.evaluate", {
       expression: "chrome.action.getBadgeText({})", awaitPromise: true, returnByValue: true
     }, workerSession);
     return response.result.value === "✓";
-  }, "Real Edge did not connect to the installed native host");
+  }, "Browser did not connect to the installed native host");
   await command("Runtime.evaluate", {
     expression: "globalThis.edgeTestReplies = []; port.onMessage.addListener(({type, reason, windowTitle}) => { const detail = reason ?? (windowTitle ? type + ':' + windowTitle.slice(0,100) : type); if (detail !== edgeTestReplies.at(-1)) edgeTestReplies.push(detail); if (edgeTestReplies.length > 12) edgeTestReplies.shift(); })"
   }, workerSession);
@@ -117,20 +123,22 @@ try {
   };
 
   try {
-    await until(async () => (await readInForeground()).pending.find(item => item.browserUrl === `${base}/first`),
-      "The foreground Edge URL was not recorded");
-    const edgeIcon = await until(async () => (await readInForeground()).applicationIcons?.["windows.msedge"],
-      "The foreground Edge executable icon was not recorded");
+    await until(async () => (await readInForeground()).pending.find(item => item.appBundleId === `windows.${processName}` &&
+      (chrome ? item.browserDomain === "127.0.0.1" && !item.browserUrl : item.browserUrl === `${base}/first`)),
+      "The foreground site was not recorded");
+    const edgeIcon = await until(async () => (await readInForeground()).applicationIcons?.[`windows.${processName}`],
+      "The foreground executable icon was not recorded");
     const png = Buffer.from(edgeIcon, "base64");
     assert.ok(png.length >= 45 && png.length <= 1536, "Edge icon exceeds its upload budget");
     assert.equal(png.subarray(0, 16).toString("hex"), "89504e470d0a1a0a0000000d49484452");
     const size = png.readUInt32BE(16);
     assert.ok(size > 0 && size <= 32 && size === png.readUInt32BE(20), "Unexpected Edge icon dimensions");
-    await command("Page.navigate", { url: `${base}/second` }, pageSession);
+    await command("Page.navigate", { url: `${second}/second` }, pageSession);
     await until(async () => {
       const updated = await readInForeground();
       return updated.captures.length > state.captures.length &&
-        updated.pending.some(item => item.browserUrl === `${base}/second`);
+        updated.pending.some(item => item.appBundleId === `windows.${processName}` &&
+          (chrome ? item.browserDomain === "localhost" && !item.browserUrl : item.browserUrl === `${second}/second`));
     }, "Site navigation did not record the new URL and trigger a capture");
   } catch (error) {
     const current = await readState();
@@ -143,7 +151,7 @@ try {
     console.log("::error::" + diagnostic.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A"));
     throw new Error(diagnostic);
   }
-  console.log("Real Edge icon, URL and screenshot on site change verified.");
+  console.log(`Real ${processName} icon, site and screenshot on site change verified.`);
 } finally {
   socket?.close();
   await Promise.all([browser, app].map(process => new Promise(resolve => {

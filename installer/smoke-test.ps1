@@ -25,6 +25,10 @@ try {
 
     $registration = 'HKCU:\Software\Microsoft\Edge\NativeMessagingHosts\com.airdesk.companion'
     $manifestPath = (Get-Item $registration).GetValue('')
+    $chromeRegistration = 'HKCU:\Software\Google\Chrome\NativeMessagingHosts\com.airdesk.companion'
+    if ((Get-Item $chromeRegistration).GetValue('') -ne $manifestPath) {
+        throw 'Chrome et Edge doivent pointer vers le même manifeste Native Messaging.'
+    }
     $hostManifest = Get-Content $manifestPath -Raw | ConvertFrom-Json
     $extensionPath = Join-Path $install 'Extension Edge\manifest.json'
     $extension = Get-Content $extensionPath -Raw | ConvertFrom-Json
@@ -80,8 +84,15 @@ try {
     if ($TestEdge) {
         Stop-Process -Id $app.Id
         $app.WaitForExit()
+        $chrome = $env:AIRDESK_TEST_CHROME
+        Remove-Item Env:AIRDESK_TEST_CHROME -ErrorAction SilentlyContinue
         node (Join-Path $PSScriptRoot '../tests/edge-live.mjs') $binary $data
         if ($LASTEXITCODE -ne 0) { throw "Test Edge sur navigateur réel échoué." }
+        if ($chrome) {
+            $env:AIRDESK_TEST_CHROME = $chrome
+            node (Join-Path $PSScriptRoot '../tests/edge-live.mjs') $binary $data
+            if ($LASTEXITCODE -ne 0) { throw "Test Chrome sur navigateur réel échoué." }
+        }
     }
 } finally {
     if (-not $app.HasExited) { Stop-Process -Id $app.Id; $app.WaitForExit() }

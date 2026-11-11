@@ -10,19 +10,19 @@ function connect() {
   port = connection;
   connection.onMessage.addListener(message => void share(message, connection));
   connection.onDisconnect.addListener(() => {
-    void chrome.runtime.lastError;
+    const error = chrome.runtime.lastError?.message;
     if (port !== connection) return;
     port = undefined;
     clearInterval(timer);
-    badge(false);
+    badge(false, error);
   });
   timer = setInterval(check, 1500);
   void check();
 }
 
-function badge(connected) {
+function badge(connected, error) {
   void chrome.action.setBadgeText({ text: connected ? "✓" : "" });
-  void chrome.action.setTitle({ title: connected ? "AirDesk Companion · connecté" : "AirDesk Companion · ouvrir le compagnon Windows" });
+  void chrome.action.setTitle({ title: connected ? "AirDesk Companion · connecté" : "AirDesk Companion · " + (error || "ouvrir le compagnon Windows") });
 }
 
 async function check() {
