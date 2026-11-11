@@ -29,11 +29,11 @@ const server = http.createServer((_, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
-const second = chrome ? base.replace("127.0.0.1", "localhost") : base;
+const second = chrome ? base.replace("127.0.0.1", "second.test") : base;
 const browser = spawn(executable, [
   `--user-data-dir=${profile}`, "--remote-debugging-port=0", "--no-first-run",
   "--no-default-browser-check", "--disable-background-networking",
-  ...(chrome ? [`--load-extension=${join(dirname(binary), "Extension Edge")}`, "--host-resolver-rules=MAP localhost 127.0.0.1"] : []),
+  ...(chrome ? [`--load-extension=${join(dirname(binary), "Extension Edge")}`, "--host-resolver-rules=MAP second.test 127.0.0.1", "--no-proxy-server"] : []),
   `${base}/first`
 ], { stdio: "ignore" });
 let socket;
@@ -133,12 +133,17 @@ try {
     assert.equal(png.subarray(0, 16).toString("hex"), "89504e470d0a1a0a0000000d49484452");
     const size = png.readUInt32BE(16);
     assert.ok(size > 0 && size <= 32 && size === png.readUInt32BE(20), "Unexpected Edge icon dimensions");
-    await command("Page.navigate", { url: `${second}/second` }, pageSession);
+    const navigation = await command("Page.navigate", { url: `${second}/second` }, pageSession);
+    assert.equal(navigation.errorText, undefined);
+    await until(async () => {
+      const response = await command("Runtime.evaluate", { expression: "document.title", returnByValue: true }, pageSession);
+      return response.result.value === "AirDesk fixture";
+    }, "Second fixture page did not load");
     await until(async () => {
       const updated = await readInForeground();
       return updated.captures.length > state.captures.length &&
         updated.pending.some(item => item.appBundleId === `windows.${processName}` &&
-          (chrome ? item.browserDomain === "localhost" && !item.browserUrl : item.browserUrl === `${second}/second`));
+          (chrome ? item.browserDomain === "second.test" && !item.browserUrl : item.browserUrl === `${second}/second`));
     }, "Site navigation did not record the new URL and trigger a capture");
   } catch (error) {
     const current = await readState();
